@@ -203,7 +203,7 @@ EOF
     fi
     
     # 创建well-known目录
-    mkdir -p well-known
+    mkdir -p well-known/.well-known/matrix
     cat > well-known/.well-known/matrix/server << EOF
 {
     "m.server": "\${MATRIX_SERVER_NAME}:8008"
