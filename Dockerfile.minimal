@@ -11,27 +11,48 @@ RUN apt-get update && apt-get install -y \
     libxml2-dev \
     libxslt1-dev \
     zlib1g-dev \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # 设置工作目录
 WORKDIR /app
 
-# 复制依赖文件
-COPY pyproject.toml ./
+# 安装Matrix Synapse和核心依赖
+RUN pip install --no-cache-dir \
+    matrix-synapse[all] \
+    psycopg2-binary \
+    cryptography \
+    pyopenssl \
+    service-identity \
+    idna \
+    pyasn1 \
+    pyasn1-modules \
+    unpaddedbase64 \
+    canonicaljson \
+    signedjson \
+    pynacl \
+    pillow \
+    packaging \
+    prometheus-client \
+    attrs \
+    pydantic \
+    treq \
+    jinja2 \
+    bleach \
+    phonenumbers \
+    ijson \
+    lmdb \
+    sortedcontainers \
+    pyyaml \
+    ujson \
+    msgpack
 
-# 安装Poetry
-RUN pip install poetry==1.6.1
+# 复制配置文件
+COPY config/ /data/config/
+COPY well-known/ /data/well-known/
 
-# 配置Poetry
-RUN poetry config virtualenvs.create false
-
-# 验证Poetry配置
-RUN poetry check
-
-# 安装核心依赖 - 排除开发依赖
-RUN poetry install --only main --no-interaction --no-ansi || \
-    (echo "Poetry install failed, trying alternative method..." && \
-     pip install -e .)
+# 创建数据目录
+RUN mkdir -p /data/media /data/uploads
 
 # 创建非root用户
 RUN groupadd -r synapse && useradd -r -g synapse synapse
@@ -50,4 +71,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8008/_matrix/client/versions || exit 1
 
 # 默认命令
-CMD ["python", "-m", "synapse.app.homeserver"]
+CMD ["python", "-m", "synapse.app.homeserver", "--config-path", "/data/config/homeserver.yaml"]
