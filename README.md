@@ -32,6 +32,14 @@
 
 ## 系统要求
 
+### 🚀 极简配置（单核CPU 2G内存）
+- **CPU**: 1核心
+- **内存**: 2GB RAM
+- **存储**: 10GB SSD
+- **网络**: 公网IP，带宽1Mbps+
+- **用户数**: 1-3个用户
+- **部署方式**: `sudo ./start.sh`
+
 ### 最低配置
 - **CPU**: 2核心
 - **内存**: 4GB RAM
@@ -45,6 +53,17 @@
 - **网络**: 公网IP，带宽50Mbps+
 
 ## 快速开始
+
+### 🚀 极简版一键部署（推荐用于单核CPU 2G内存）
+
+```bash
+# 克隆项目
+git clone https://github.com/langkebo/synapsecode.git
+cd synapsecode
+
+# 一键部署
+sudo ./start.sh
+```
 
 ### GitHub快速部署
 

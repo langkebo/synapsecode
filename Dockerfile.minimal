@@ -1,0 +1,48 @@
+# 极简版 Dockerfile for Matrix Synapse
+FROM python:3.9-slim
+
+# 安装系统依赖 - 最小化
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libpq-dev \
+    libffi-dev \
+    libssl-dev \
+    libjpeg-dev \
+    libxml2-dev \
+    libxslt1-dev \
+    zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 设置工作目录
+WORKDIR /app
+
+# 复制依赖文件
+COPY pyproject.toml ./
+
+# 安装Poetry
+RUN pip install poetry==1.6.1
+
+# 配置Poetry
+RUN poetry config virtualenvs.create false
+
+# 安装核心依赖 - 排除开发依赖
+RUN poetry install --only main --no-interaction --no-ansi
+
+# 创建非root用户
+RUN groupadd -r synapse && useradd -r -g synapse synapse
+USER synapse
+
+# 设置环境变量
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# 暴露端口
+EXPOSE 8008
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8008/_matrix/client/versions || exit 1
+
+# 默认命令
+CMD ["python", "-m", "synapse.app.homeserver"]

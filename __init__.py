@@ -19,6 +19,7 @@
 
 import os
 import sys
+import warnings
 from typing import Any, Dict
 
 from PIL import ImageFile
@@ -38,8 +39,7 @@ Please update your git remote to pull from element-hq/synapse:
 
    git remote set-url origin git@github.com:element-hq/synapse.git
 """
-print(announcement)
-sys.exit(1)
+warnings.warn(announcement, DeprecationWarning)
 
 # Check that we're not running on an unsupported Python version.
 #
