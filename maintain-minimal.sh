@@ -46,8 +46,14 @@ check_services() {
     local containers=("matrix-postgres" "matrix-synapse" "matrix-well-known")
     local all_running=true
     
+    # 首先检查是否有任何容器运行
+    if ! docker ps | grep -q "matrix-"; then
+        print_error "没有发现Matrix相关容器运行"
+        return 1
+    fi
+    
     for container in "${containers[@]}"; do
-        if docker ps --format "table {{.Names}}\t{{.Status}}" | grep -q "$container.*Up"; then
+        if docker ps --format "{{.Names}}" | grep -q "^${container}$"; then
             print_success "$container ✓"
         else
             print_error "$container ✗"
