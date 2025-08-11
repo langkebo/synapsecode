@@ -1,4 +1,4 @@
-# 极简版 Dockerfile for Matrix Synapse
+# 超简化版 Dockerfile for Matrix Synapse
 FROM python:3.9-slim
 
 # 安装系统依赖 - 最小化
@@ -11,27 +11,25 @@ RUN apt-get update && apt-get install -y \
     libxml2-dev \
     libxslt1-dev \
     zlib1g-dev \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # 设置工作目录
 WORKDIR /app
 
-# 复制依赖文件
+# 复制核心文件
 COPY pyproject.toml ./
+COPY README.md ./
 
-# 安装Poetry
-RUN pip install poetry==1.6.1
+# 创建简化的requirements.txt
+RUN grep -A 50 'tool.poetry.dependencies' pyproject.toml | \
+    grep -E '^[[:space:]]+[a-zA-Z-_.0-9]+ = ' | \
+    sed 's/^[[:space:]]*//' | \
+    sed 's/ = .*//' | \
+    sed '/^$/d' > requirements.txt
 
-# 配置Poetry
-RUN poetry config virtualenvs.create false
-
-# 验证Poetry配置
-RUN poetry check
-
-# 安装核心依赖 - 排除开发依赖
-RUN poetry install --only main --no-interaction --no-ansi || \
-    (echo "Poetry install failed, trying alternative method..." && \
-     pip install -e .)
+# 安装核心依赖
+RUN pip install --no-cache-dir -r requirements.txt
 
 # 创建非root用户
 RUN groupadd -r synapse && useradd -r -g synapse synapse

@@ -93,7 +93,6 @@ test = [
     "parameterized",
     "freezegun",
     "mock",
-    "twisted[test]",
 ]
 
 # Development extras
