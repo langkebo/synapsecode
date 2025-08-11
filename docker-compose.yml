@@ -1,0 +1,252 @@
+version: '3.8'
+
+services:
+  # Nginx Proxy Manager - Reverse proxy and SSL management
+  nginx-proxy-manager:
+    image: 'jc21/nginx-proxy-manager:latest'
+    container_name: matrix-npm
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+      - '81:81'
+    volumes:
+      - npm_data:/data
+      - npm_letsencrypt:/etc/letsencrypt
+    networks:
+      - matrix-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:81"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.2'
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: matrix-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-synapse}
+      - POSTGRES_USER=${POSTGRES_USER:-synapse}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    networks:
+      - matrix-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-synapse} -d ${POSTGRES_DB:-synapse}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+          cpus: '0.2'
+
+  # Redis Cache (optional but recommended)
+  redis:
+    image: redis:7-alpine
+    container_name: matrix-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    networks:
+      - matrix-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.3'
+        reservations:
+          memory: 256M
+          cpus: '0.1'
+
+  # Synapse Matrix Server
+  synapse:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: matrix-synapse
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      # Server configuration
+      - SYNAPSE_SERVER_NAME=${MATRIX_SERVER_NAME}
+      - SYNAPSE_REPORT_STATS=${REPORT_STATS:-no}
+      - SYNAPSE_CONFIG_PATH=/data/homeserver.yaml
+      
+      # Database configuration
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=${POSTGRES_DB:-synapse}
+      - POSTGRES_USER=${POSTGRES_USER:-synapse}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      
+      # Redis configuration
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      
+      # Security secrets
+      - REGISTRATION_SHARED_SECRET=${REGISTRATION_SHARED_SECRET}
+      - MACAROON_SECRET_KEY=${MACAROON_SECRET_KEY}
+      - FORM_SECRET=${FORM_SECRET}
+      
+      # Feature flags
+      - ENABLE_REGISTRATION=${ENABLE_REGISTRATION:-false}
+      - FRIENDS_ENABLED=${FRIENDS_ENABLED:-true}
+      
+      # Performance tuning
+      - SYNAPSE_CACHE_FACTOR=1.0
+      - SYNAPSE_EVENT_CACHE_SIZE=10000
+    volumes:
+      - synapse_data:/data
+      - synapse_media:/media
+      - synapse_logs:/logs
+      - ./docker/synapse:/etc/synapse:ro
+    networks:
+      - matrix-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8008/_matrix/client/versions"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Well-known server discovery
+  well-known:
+    image: nginx:alpine
+    container_name: matrix-well-known
+    restart: unless-stopped
+    volumes:
+      - ./well-known:/usr/share/nginx/html:ro
+      - ./docker/nginx/well-known.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - matrix-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/.well-known/matrix/server"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: '0.1'
+
+  # Optional: Monitoring with Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: matrix-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    volumes:
+      - prometheus_data:/prometheus
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - matrix-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+    profiles:
+      - monitoring
+
+  # Optional: Grafana for metrics visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: matrix-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./docker/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./docker/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - matrix-network
+    ports:
+      - "3000:3000"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.3'
+    profiles:
+      - monitoring
+
+# Volume definitions
+volumes:
+  npm_data:
+    driver: local
+  npm_letsencrypt:
+    driver: local
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  synapse_data:
+    driver: local
+  synapse_media:
+    driver: local
+  synapse_logs:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+# Network definition
+networks:
+  matrix-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

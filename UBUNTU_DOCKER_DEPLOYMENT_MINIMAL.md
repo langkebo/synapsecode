@@ -1,18 +1,24 @@
 # Ubuntu 简化版 Matrix 服务器部署指南
 
-## 系统要求（低配版）
+## 系统要求（极简版）
 
-### 硬件要求
-- **CPU**: 1核以上
-- **内存**: 2GB以上（推荐4GB）
-- **存储**: 20GB以上可用空间
+### 最低硬件要求
+- **CPU**: 1核 vCPU
+- **内存**: 1.5GB RAM（最低要求）
+- **存储**: 15GB SSD空间
+- **网络**: 公网IP，带宽2Mbps以上
+
+### 推荐硬件要求
+- **CPU**: 2核 vCPU
+- **内存**: 2GB RAM
+- **存储**: 25GB SSD空间
 - **网络**: 公网IP，带宽5Mbps以上
 
 ### 软件要求
-- Ubuntu 20.04 LTS 或 22.04 LTS
+- Ubuntu 20.04 LTS 或 22.04 LTS (64位)
 - Docker 20.10+
 - Docker Compose 2.0+
-- 域名（用于SSL证书）
+- 域名（用于SSL证书，可选但推荐）
 
 ### 端口要求
 - **80/TCP**: HTTP（用于Let's Encrypt证书申请）
@@ -50,57 +56,62 @@ sudo ufw reload
 ### 2. 创建项目目录
 
 ```bash
-# 定义项目根目录，您可以根据需要修改此路径
+# 定义项目根目录
 PROJECT_DIR="/opt/matrix-server"
 
 sudo mkdir -p $PROJECT_DIR
 sudo chown $USER:$USER $PROJECT_DIR
 cd $PROJECT_DIR
 
+# 创建必要的目录结构
 mkdir -p {
-    synapse/{data,config,media},
+    synapse/{data,media,logs},
     postgres/data,
-    nginx-proxy-manager/{data,letsencrypt},
     well-known/matrix
 }
 
-# 创建Dockerfile
+# 创建轻量化Dockerfile
 cat > Dockerfile << 'EOF'
 FROM python:3.9-slim
 
-# 安装系统依赖
+# 安装最小必需的系统依赖
 RUN apt-get update && apt-get install -y \
     build-essential \
     libpq-dev \
     libffi-dev \
     libssl-dev \
-    libjpeg-dev \
     libxml2-dev \
     libxslt1-dev \
     zlib1g-dev \
-    libcurl4-openssl-dev \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
 # 设置工作目录
 WORKDIR /synapse
 
-# 复制项目代码
-COPY . .
-
 # 安装Poetry
-RUN pip install poetry
+RUN pip install poetry==1.6.1
 
 # 配置Poetry
 RUN poetry config virtualenvs.create false
 
-# 安装依赖
-RUN poetry install --only=main --no-dev --extras all
+# 复制依赖文件
+COPY pyproject.toml poetry.lock* ./
+
+# 安装生产依赖（跳过开发依赖）
+RUN poetry install --only=main --no-dev --no-interaction --no-ansi
+
+# 复制项目代码
+COPY . .
 
 # 创建数据目录
 RUN mkdir -p /data /media /logs
 
-# 设置环境变量
-ENV SYNAPSE_CONFIG_PATH=/data/homeserver.yaml
+# 设置环境变量以减少内存使用
+ENV SYNAPSE_CONFIG_PATH=/data/homeserver.yaml \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONOPTIMIZE=1
 
 # 暴露端口
 EXPOSE 8008
@@ -119,7 +130,7 @@ REGISTRATION_SECRET=$(openssl rand -base64 32)
 MACAROON_SECRET_KEY=$(openssl rand -base64 32)
 FORM_SECRET=$(openssl rand -base64 32)
 
-# 创建环境变量文件
+# 创建环境变量文件（针对低配服务器优化）
 cat > .env << EOF
 # 服务器配置
 MATRIX_SERVER_NAME=matrix.cjystx.top
@@ -138,41 +149,31 @@ FORM_SECRET=${FORM_SECRET}
 
 # 功能配置
 ENABLE_REGISTRATION=false
-MAX_UPLOAD_SIZE=50M
+MAX_UPLOAD_SIZE=10M
 REPORT_STATS=no
 
 # 好友功能配置
 FRIENDS_ENABLED=true
-MAX_FRIENDS_PER_USER=1000
+MAX_FRIENDS_PER_USER=200
 FRIEND_REQUEST_TIMEOUT=604800
+
+# 性能优化配置（低配服务器）
+SYNAPSE_CACHE_FACTOR=0.5
+SYNAPSE_EVENT_CACHE_SIZE=2000
+MAX_UPLOAD_SIZE=10M
 EOF
 
 chmod 600 .env
 ```
 
-### 4. 创建简化版 Docker Compose 配置
+### 4. 创建轻量化 Docker Compose 配置
 
 ```yaml
 cat > docker-compose.yml << EOF
-
+version: '3.8'
 
 services:
-  # Nginx Proxy Manager - 反向代理和SSL管理
-  nginx-proxy-manager:
-    image: 'jc21/nginx-proxy-manager:latest'
-    container_name: npm
-    restart: unless-stopped
-    ports:
-      - '80:80'
-      - '443:443'
-      - '81:81'
-    volumes:
-      - ./nginx-proxy-manager/data:/data
-      - ./nginx-proxy-manager/letsencrypt:/etc/letsencrypt
-    networks:
-      - matrix-network
-
-  # PostgreSQL 数据库
+  # PostgreSQL 数据库（轻量化配置）
   postgres:
     image: postgres:15-alpine
     container_name: matrix-postgres
@@ -182,6 +183,7 @@ services:
       - POSTGRES_USER=\${POSTGRES_USER}
       - POSTGRES_PASSWORD=\${POSTGRES_PASSWORD}
       - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+      - POSTGRES_HOST_AUTH_METHOD=trust
     volumes:
       - ./postgres/data:/var/lib/postgresql/data
     networks:
@@ -189,10 +191,13 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
-          cpus: '0.5'
+          memory: 512M
+          cpus: '0.3'
+        reservations:
+          memory: 256M
+          cpus: '0.1'
 
-  # Synapse Matrix 服务器（使用本地构建）
+  # Synapse Matrix 服务器（低配优化）
   synapse:
     build: 
       context: .
@@ -212,6 +217,8 @@ services:
       - REGISTRATION_SHARED_SECRET=\${REGISTRATION_SHARED_SECRET}
       - MACAROON_SECRET_KEY=\${MACAROON_SECRET_KEY}
       - FORM_SECRET=\${FORM_SECRET}
+      - SYNAPSE_CACHE_FACTOR=\${SYNAPSE_CACHE_FACTOR}
+      - SYNAPSE_EVENT_CACHE_SIZE=\${SYNAPSE_EVENT_CACHE_SIZE}
     volumes:
       - ./synapse/data:/data
       - ./synapse/media:/media
@@ -221,10 +228,13 @@ services:
     deploy:
       resources:
         limits:
-          memory: 2G
-          cpus: '1.0'
+          memory: 1G
+          cpus: '0.8'
+        reservations:
+          memory: 512M
+          cpus: '0.3'
 
-  # Well-known 服务器发现
+  # Well-known 服务器发现（轻量化）
   well-known:
     image: nginx:alpine
     container_name: matrix-well-known
@@ -234,17 +244,131 @@ services:
       - ./well-known.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       - matrix-network
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: '0.1'
 
 networks:
   matrix-network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
 EOF
 ```
 
-### 5. 创建 Well-known 配置
+### 5. 创建 Nginx 反向代理配置（简化版）
 
 ```bash
-# 创建 Nginx 配置
+# 创建 Nginx 反向代理配置
+cat > nginx.conf << EOF
+events {
+    worker_connections 1024;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+    
+    # 基本配置
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+    
+    # Gzip 压缩
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+    
+    # Matrix 服务器代理
+    server {
+        listen 80;
+        server_name ${MATRIX_SERVER_NAME};
+        
+        # 重定向到 HTTPS（如果有SSL证书）
+        # return 301 https://\$server_name\$request_uri;
+        
+        # 或者直接代理到 HTTP（开发/测试环境）
+        location / {
+            proxy_pass http://synapse:8008;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+            
+            # WebSocket 支持
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade \$http_upgrade;
+            proxy_set_header Connection "upgrade";
+            
+            # 超时设置
+            proxy_connect_timeout 60s;
+            proxy_send_timeout 60s;
+            proxy_read_timeout 60s;
+        }
+    }
+    
+    # Well-known 服务器发现
+    server {
+        listen 80;
+        server_name ${MATRIX_DOMAIN};
+        
+        location /.well-known/matrix/ {
+            root /usr/share/nginx/html;
+            add_header Content-Type application/json;
+            add_header Access-Control-Allow-Origin *;
+            add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS";
+            add_header Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization";
+            
+            expires 1h;
+            add_header Cache-Control "public, immutable";
+        }
+        
+        location / {
+            return 404;
+        }
+    }
+}
+EOF
+
+# 创建 Nginx 服务配置
+cat > docker-compose.override.yml << EOF
+version: '3.8'
+
+services:
+  # 添加 Nginx 反向代理
+  nginx:
+    image: nginx:alpine
+    container_name: matrix-nginx
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./well-known:/usr/share/nginx/html:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - synapse
+      - well-known
+    networks:
+      - matrix-network
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.2'
+EOF
+
+### 6. 创建 Well-known 配置
+
+```bash
+# 创建 well-known 配置
 cat > well-known.conf << EOF
 events {
     worker_connections 1024;
@@ -296,7 +420,7 @@ cat > well-known/matrix/client << EOF
 EOF
 ```
 
-### 6. 构建并启动服务
+### 7. 构建并启动服务（简化版）
 
 #### 从开发环境上传代码（在您的本地机器上执行）
 
@@ -339,83 +463,139 @@ ls -la synapsecode/storage/
 tree -L 2
 ```
 
-#### 构建并启动服务
+#### 构建并启动服务（简化版）
 
 ```bash
-# 构建并启动基础服务
-docker-compose up -d --build postgres
-sleep 20
+# 使用合并配置启动所有服务
+docker-compose -f docker-compose.yml -f docker-compose.override.yml up -d --build
 
-# 启动 Nginx Proxy Manager
-docker-compose up -d nginx-proxy-manager
-sleep 15
-
-# 启动 Synapse（这会触发本地构建，可能需要几分钟）
-docker-compose up -d --build synapse
+# 等待服务启动
 sleep 60
 
-# 启动 well-known 服务
-docker-compose up -d well-known
-
-# 检查所有服务状态
-docker-compose ps
+# 检查服务状态
+docker-compose -f docker-compose.yml -f docker-compose.override.yml ps
 ```
 
 #### 如果构建失败，查看详细日志
 
 ```bash
-# 查看 Synapse 构建日志
-docker-compose logs synapse
+# 查看所有服务日志
+docker-compose -f docker-compose.yml -f docker-compose.override.yml logs
 
-# 查看 Synapse 运行日志
-docker-compose logs -f synapse
+# 查看特定服务日志
+docker-compose -f docker-compose.yml -f docker-compose.override.yml logs -f synapse
+docker-compose -f docker-compose.yml -f docker-compose.override.yml logs -f postgres
 
 # 如果需要重新构建
-docker-compose down
-docker-compose build --no-cache synapse
-docker-compose up -d
+docker-compose -f docker-compose.yml -f docker-compose.override.yml down
+docker-compose -f docker-compose.yml -f docker-compose.override.yml build --no-cache
+docker-compose -f docker-compose.yml -f docker-compose.override.yml up -d
 ```
 
-### 7. 配置 Nginx Proxy Manager
+### 8. 配置 SSL 证书（可选）
 
-1. **访问管理界面**
-   ```bash
-   echo "访问: http://$(curl -s ifconfig.me):81"
-   ```
+如果需要 HTTPS 支持，可以使用 Let's Encrypt 证书：
 
-2. **默认登录信息**
-   - Email: `admin@example.com`
-   - Password: `changeme`
+```bash
+# 安装 certbot
+sudo apt install certbot -y
 
-3. **配置代理主机**
+# 申请证书
+sudo certbot certonly --standalone -d ${MATRIX_SERVER_NAME} -d ${MATRIX_DOMAIN}
 
-   **Matrix服务器代理:**
-   - Domain Names: `matrix.cjystx.top`
-   - Scheme: `http`
-   - Forward Hostname/IP: `matrix-synapse`
-   - Forward Port: `8008`
-   - Enable SSL: 申请Let's Encrypt证书
-   - Enable Websocket Support: ✓
-   - Block Common Exploits: ✓
+# 创建 SSL 目录
+mkdir -p ./ssl
 
-   **Well-known服务代理:**
-   - Domain Names: `cjystx.top`
-   - Scheme: `http`
-   - Forward Hostname/IP: `matrix-well-known`
-   - Forward Port: `80`
-   - Enable SSL: 申请Let's Encrypt证书
+# 复制证书
+sudo cp /etc/letsencrypt/live/${MATRIX_SERVER_NAME}/fullchain.pem ./ssl/
+sudo cp /etc/letsencrypt/live/${MATRIX_SERVER_NAME}/privkey.pem ./ssl/
+sudo chown -R $USER:$USER ./ssl
 
-4. **SSL证书配置**
-   - 在SSL证书选项中选择"申请Let's Encrypt证书"
-   - 同意服务条款
-   - 使用邮箱: `admin@cjystx.top`
-   - 等待证书签发（通常需要1-2分钟）
+# 更新 Nginx 配置以支持 HTTPS
+cat > nginx-ssl.conf << EOF
+events {
+    worker_connections 1024;
+}
 
-5. **验证配置**
-   - 访问 `https://matrix.cjystx.top` 应该显示JSON响应
-   - 访问 `https://cjystx.top/.well-known/matrix/server` 应该显示服务器配置
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+    
+    # 基本配置
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+    
+    # Gzip 压缩
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+    
+    # HTTPS 服务器
+    server {
+        listen 443 ssl http2;
+        server_name ${MATRIX_SERVER_NAME};
+        
+        ssl_certificate /etc/nginx/ssl/fullchain.pem;
+        ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers HIGH:!aNULL:!MD5;
+        
+        location / {
+            proxy_pass http://synapse:8008;
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+            
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade \$http_upgrade;
+            proxy_set_header Connection "upgrade";
+            
+            proxy_connect_timeout 60s;
+            proxy_send_timeout 60s;
+            proxy_read_timeout 60s;
+        }
+    }
+    
+    # HTTP 重定向到 HTTPS
+    server {
+        listen 80;
+        server_name ${MATRIX_SERVER_NAME};
+        return 301 https://\$server_name\$request_uri;
+    }
+    
+    # Well-known 服务器发现
+    server {
+        listen 80;
+        server_name ${MATRIX_DOMAIN};
+        
+        location /.well-known/matrix/ {
+            root /usr/share/nginx/html;
+            add_header Content-Type application/json;
+            add_header Access-Control-Allow-Origin *;
+            add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS";
+            add_header Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization";
+            
+            expires 1h;
+            add_header Cache-Control "public, immutable";
+        }
+        
+        location / {
+            return 404;
+        }
+    }
+}
+EOF
 
-### 8. 生成 Synapse 配置
+# 重启 Nginx 服务
+docker-compose -f docker-compose.yml -f docker-compose.override.yml restart nginx
+```
+
+### 9. 生成 Synapse 配置
 
 ```bash
 # 生成初始配置
@@ -425,7 +605,7 @@ docker-compose exec synapse python -m synapse.app.homeserver \
   --generate-config \
   --report-stats=${REPORT_STATS}
 
-# 创建优化的配置文件
+# 创建低配优化配置文件
 docker-compose exec synapse tee /data/homeserver.yaml > /dev/null << EOF
 # 基础配置
 server_name: "${MATRIX_SERVER_NAME}"
@@ -444,7 +624,7 @@ listeners:
       - names: [client, federation]
         compress: false
 
-# 数据库配置
+# 数据库配置（低配优化）
 database:
   name: psycopg2
   args:
@@ -453,29 +633,34 @@ database:
     database: \${POSTGRES_DB}
     host: postgres
     port: 5432
-    cp_min: 2
-    cp_max: 5
+    cp_min: 1
+    cp_max: 3
     keepalives_idle: 10
     keepalives_interval: 5
     keepalives_count: 3
 
-# 事件持久化配置
+# 事件持久化配置（低配优化）
 event_persistence:
   background_updates: true
+  persistence_targets: 
+    - target: "database"
+      delay_before: 500
 
-# 缓存配置
+# 缓存配置（低配优化）
 caches:
-  global_factor: 1.0
+  global_factor: 0.5
+  event_cache_size: 2000
+  cache_factor: 0.5
 
-# 日志配置
+# 日志配置（简化）
 log_config: "/data/\${MATRIX_SERVER_NAME}.log.config"
 
-# 媒体存储
+# 媒体存储（低配优化）
 media_store_path: "/data/media"
 max_upload_size: "\${MAX_UPLOAD_SIZE}"
 media_retention:
-  local_media_lifetime: 30d
-  remote_media_lifetime: 30d
+  local_media_lifetime: 7d
+  remote_media_lifetime: 3d
 
 # 注册配置
 enable_registration: \${ENABLE_REGISTRATION}
@@ -492,9 +677,9 @@ friends:
   friend_request_timeout: \${FRIEND_REQUEST_TIMEOUT}
   allow_cross_domain_friends: true
 
-# 隐私配置
+# 隐私配置（简化以减少资源使用）
 enable_presence: true
-allow_device_name_lookup: true
+allow_device_name_lookup: false
 
 # 联邦配置
 federation_domain_whitelist: []
@@ -504,6 +689,20 @@ report_stats: \${REPORT_STATS}
 
 # URL预览配置
 url_preview_enabled: false
+
+# 性能优化配置
+stream_writers:
+  events:
+    writers:
+      - type: directory
+        path: /data/events
+        max_file_size: 256MB
+        max_files: 3
+
+# 禁用非必要功能
+enable_metrics: false
+enable_registration_captcha: false
+enable_3pid_lookup: false
 EOF
 
 # 重启 Synapse 应用配置
@@ -524,23 +723,23 @@ docker-compose exec synapse register_new_matrix_user \
 
 ```bash
 # 检查服务状态
-docker-compose ps
+docker-compose -f docker-compose.yml -f docker-compose.override.yml ps
 
-# 测试 Matrix API
-curl -f https://matrix.cjystx.top/_matrix/client/versions
+# 测试 Matrix API（HTTP）
+curl -f http://$(curl -s ifconfig.me)/_matrix/client/versions
 
 # 测试 well-known 发现
-curl -f https://cjystx.top/.well-known/matrix/server
-curl -f https://cjystx.top/.well-known/matrix/client
+curl -f http://${MATRIX_DOMAIN}/.well-known/matrix/server
+curl -f http://${MATRIX_DOMAIN}/.well-known/matrix/client
 
 # 检查日志
-docker-compose logs --tail=50 synapse
+docker-compose -f docker-compose.yml -f docker-compose.override.yml logs --tail=50 synapse
 
 # 测试服务器连接
-curl -s https://matrix.cjystx.top/_matrix/federation/v1/version
+curl -s http://$(curl -s ifconfig.me)/_matrix/federation/v1/version
 ```
 
-### 9. 创建管理员用户
+### 11. 创建管理员用户
 
 ```bash
 # 创建管理员用户
@@ -553,12 +752,12 @@ docker-compose exec synapse register_new_matrix_user \
 # 例如：用户名 admin，密码 your-secure-password
 ```
 
-### 11. 客户端连接测试
+### 12. 客户端连接测试
 
 1. **使用 Element Web 客户端**
    - 访问 https://app.element.io
    - 选择"使用自定义服务器"
-   - 服务器地址：`https://matrix.cjystx.top`
+   - 服务器地址：`http://$(curl -s ifconfig.me)` (HTTP) 或 `https://${MATRIX_SERVER_NAME}` (HTTPS)
    - 使用刚才创建的管理员账号登录
 
 2. **测试好友功能**
@@ -568,23 +767,26 @@ docker-compose exec synapse register_new_matrix_user \
 
 ## 服务管理
 
-### 基本操作
+### 基本操作（简化版）
 
 ```bash
 # 启动所有服务
-docker-compose up -d
+docker-compose -f docker-compose.yml -f docker-compose.override.yml up -d
 
 # 停止所有服务
-docker-compose down
+docker-compose -f docker-compose.yml -f docker-compose.override.yml down
 
 # 重启服务
-docker-compose restart synapse
+docker-compose -f docker-compose.yml -f docker-compose.override.yml restart synapse
 
 # 查看日志
-docker-compose logs -f synapse
+docker-compose -f docker-compose.yml -f docker-compose.override.yml logs -f synapse
 
 # 查看资源使用
 docker stats
+
+# 查看实时资源使用
+docker stats --no-stream
 ```
 
 ### 备份脚本
@@ -599,21 +801,24 @@ DATE=$(date +%Y%m%d_%H%M%S)
 mkdir -p $BACKUP_DIR
 
 # 备份数据库
-docker-compose exec -T postgres pg_dump -U synapse -d synapse > $BACKUP_DIR/postgres_$DATE.sql
+docker-compose -f docker-compose.yml -f docker-compose.override.yml exec -T postgres pg_dump -U ${POSTGRES_USER} -d ${POSTGRES_DB} > $BACKUP_DIR/postgres_$DATE.sql
 
 # 备份配置文件
 tar -czf $BACKUP_DIR/config_$DATE.tar.gz \
-  synapse/config/ \
-  well-known/ \
   .env \
-  docker-compose.yml
+  docker-compose.yml \
+  docker-compose.override.yml \
+  nginx.conf \
+  well-known/
 
-# 备份媒体文件
-tar -czf $BACKUP_DIR/media_$DATE.tar.gz synapse/media/
+# 备份数据目录
+tar -czf $BACKUP_DIR/data_$DATE.tar.gz \
+  synapse/data/ \
+  synapse/media/
 
-# 清理旧备份（保留7天）
-find $BACKUP_DIR -name "*.sql" -mtime +7 -delete
-find $BACKUP_DIR -name "*.tar.gz" -mtime +7 -delete
+# 清理旧备份（保留5天，节省空间）
+find $BACKUP_DIR -name "*.sql" -mtime +5 -delete
+find $BACKUP_DIR -name "*.tar.gz" -mtime +5 -delete
 
 echo "备份完成: $BACKUP_DIR"
 EOF
@@ -639,9 +844,9 @@ check_service() {
 
 echo "🔍 开始健康检查..."
 
-# 检查服务
-check_service "https://${MATRIX_SERVER_NAME}/_matrix/client/versions"
-check_service "https://${MATRIX_DOMAIN}/.well-known/matrix/server"
+# 检查服务（HTTP）
+check_service "http://$(curl -s ifconfig.me)/_matrix/client/versions"
+check_service "http://${MATRIX_DOMAIN}/.well-known/matrix/server"
 
 echo "✅ 健康检查完成"
 EOF
@@ -658,95 +863,205 @@ chmod +x health-check.sh
 
 1. **容器启动失败**
    ```bash
-   docker-compose ps
-   docker-compose logs synapse
-   docker-compose logs postgres
+   docker-compose -f docker-compose.yml -f docker-compose.override.yml ps
+   docker-compose -f docker-compose.yml -f docker-compose.override.yml logs synapse
+   docker-compose -f docker-compose.yml -f docker-compose.override.yml logs postgres
+   docker-compose -f docker-compose.yml -f docker-compose.override.yml logs nginx
    ```
 
 2. **数据库连接问题**
    ```bash
-   docker-compose exec postgres pg_isready
+   docker-compose -f docker-compose.yml -f docker-compose.override.yml exec postgres pg_isready
    ```
 
 3. **内存不足**
    ```bash
    free -h
-   docker stats
+   docker stats --no-stream
+   # 如果内存不足，可以调整docker-compose.override.yml中的资源限制
+   ```
+
+4. **端口占用问题**
+   ```bash
+   # 检查端口占用
+   sudo netstat -tulpn | grep :80
+   sudo netstat -tulpn | grep :443
+   # 停止占用端口的服务
+   sudo systemctl stop nginx
+   sudo systemctl stop apache2
    ```
 
 ### 重置部署（谨慎操作）
 
 ```bash
 # 停止服务
-docker-compose down
+docker-compose -f docker-compose.yml -f docker-compose.override.yml down
 
 # 备份数据
 ./backup.sh
 
-# 清理数据（会删除所有数据）
-sudo rm -rf postgres/data synapse/data
+# 清理数据（会删除所有数据，谨慎操作）
+sudo rm -rf postgres/data synapse/data synapse/media
+
+# 清理Docker镜像和容器
+docker system prune -a -f
 
 # 重新初始化
-docker-compose up -d
+docker-compose -f docker-compose.yml -f docker-compose.override.yml up -d --build
 ```
 
-## 性能优化建议
+## 性能优化建议（低配服务器专用）
 
-### 1. PostgreSQL 优化
+### 1. 系统级优化
 ```bash
-# 创建 PostgreSQL 优化配置
-docker-compose exec postgres tee /etc/postgresql/postgresql.conf > /dev/null << EOF
-shared_buffers = 128MB
-effective_cache_size = 512MB
-maintenance_work_mem = 64MB
-checkpoint_completion_target = 0.9
-wal_buffers = 8MB
-default_statistics_target = 100
-max_connections = 100
+# 创建系统优化配置
+sudo tee /etc/sysctl.d/99-matrix-minimal.conf << EOF
+# 低配服务器优化配置
+fs.file-max = 16384
+net.core.rmem_max = 4194304
+net.core.wmem_max = 4194304
+net.ipv4.tcp_rmem = 4096 87380 4194304
+net.ipv4.tcp_wmem = 4096 32768 4194304
+net.ipv4.tcp_fin_timeout = 30
+net.ipv4.tcp_keepalive_time = 60
+net.ipv4.ip_local_port_range = 1024 32768
+vm.swappiness = 10
+vm.vfs_cache_pressure = 50
 EOF
 
-docker-compose restart postgres
+sudo sysctl -p /etc/sysctl.d/99-matrix-minimal.conf
 ```
 
-### 2. Synapse 优化
+### 2. Docker 资源限制优化
 ```bash
-# 更新 Synapse 配置中的缓存设置
-docker-compose exec synapse tee -a /data/homeserver.yaml > /dev/null << EOF
+# 创建优化后的 docker-compose.override.yml
+cat > docker-compose.override.optimized.yml << EOF
+version: '3.8'
 
-# 性能优化配置
+services:
+  postgres:
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+          cpus: '0.2'
+        reservations:
+          memory: 128M
+          cpus: '0.1'
+    environment:
+      - POSTGRES_SHARED_BUFFERS=64MB
+      - POSTGRES_EFFECTIVE_CACHE_SIZE=256MB
+      - POSTGRES_MAINTENANCE_WORK_MEM=32MB
+
+  synapse:
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: '0.6'
+        reservations:
+          memory: 384M
+          cpus: '0.2'
+    environment:
+      - SYNAPSE_CACHE_FACTOR=0.3
+      - SYNAPSE_EVENT_CACHE_SIZE=1000
+
+  nginx:
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+          cpus: '0.1'
+
+  well-known:
+    deploy:
+      resources:
+        limits:
+          memory: 32M
+          cpus: '0.05'
+EOF
+```
+
+### 3. PostgreSQL 配置优化
+```bash
+# 创建 PostgreSQL 优化配置
+cat > postgres/postgresql.conf << EOF
+# 低配服务器 PostgreSQL 配置
+shared_buffers = 64MB
+effective_cache_size = 256MB
+maintenance_work_mem = 32MB
+checkpoint_completion_target = 0.9
+wal_buffers = 4MB
+default_statistics_target = 50
+max_connections = 50
+work_mem = 2MB
+random_page_cost = 2.0
+effective_io_concurrency = 1
+EOF
+
+# 重启 PostgreSQL
+docker-compose -f docker-compose.yml -f docker-compose.override.yml restart postgres
+```
+
+### 4. Synapse 配置优化
+```bash
+# 创建更激进的 Synapse 优化配置
+docker-compose -f docker-compose.yml -f docker-compose.override.yml exec synapse tee -a /data/homeserver.yaml > /dev/null << EOF
+
+# 极简优化配置
 caches:
-  global_factor: 1.0
-  event_cache_size: 5000
+  global_factor: 0.3
+  event_cache_size: 1000
+  cache_factor: 0.3
+
+database:
+  args:
+    cp_min: 1
+    cp_max: 2
 
 stream_writers:
   events:
     writers:
       - type: directory
         path: /data/events
-        max_file_size: 512MB
-        max_files: 5
+        max_file_size: 128MB
+        max_files: 2
+
+# 禁用更多功能以节省资源
+enable_metrics: false
+enable_registration_captcha: false
+enable_3pid_lookup: false
+suppress_key_server: true
 EOF
 
-docker-compose restart synapse
+# 重启 Synapse
+docker-compose -f docker-compose.yml -f docker-compose.override.yml restart synapse
 ```
 
-### 3. 系统优化
+### 5. 监控和日志优化
 ```bash
-# 创建系统优化配置
-sudo tee /etc/sysctl.d/99-synapse.conf << EOF
-# 增加文件描述符限制
-fs.file-max = 32768
+# 创建监控脚本
+cat > monitor.sh << 'EOF'
+#!/bin/bash
+# 简单的资源监控脚本
 
-# 网络参数优化
-net.core.rmem_max = 8388608
-net.core.wmem_max = 8388608
-net.ipv4.tcp_rmem = 4096 87380 8388608
-net.ipv4.tcp_wmem = 4096 65536 8388608
-net.ipv4.tcp_fin_timeout = 30
-net.ipv4.tcp_keepalive_time = 120
+while true; do
+    echo "=== $(date) ==="
+    echo "内存使用:"
+    free -h
+    echo "Docker 容器状态:"
+    docker stats --no-stream --format "table {{.Container}}\t{{.CPUPerc}}\t{{.MemUsage}}"
+    echo "Synapse 日志最后5行:"
+    docker-compose logs --tail=5 synapse
+    echo "=================="
+    sleep 300
+done
 EOF
 
-sudo sysctl -p /etc/sysctl.d/99-synapse.conf
+chmod +x monitor.sh
+
+# 运行监控（在另一个终端）
+./monitor.sh
 ```
 
 ## 一键部署脚本
@@ -1121,41 +1436,554 @@ sudo ./deploy-matrix.sh
 # 4. 按照脚本提示完成剩余配置
 ```
 
+## 简化版一键部署脚本
+
+### 极简部署脚本（适合1.5GB内存服务器）
+
+```bash
+#!/bin/bash
+# 简化版 Matrix 服务器一键部署脚本
+# 专为低配服务器设计（1.5GB内存+）
+
+set -e
+
+# 颜色输出
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# 日志函数
+log_info() {
+    echo -e "${GREEN}[INFO]${NC} $1"
+}
+
+log_warn() {
+    echo -e "${YELLOW}[WARN]${NC} $1"
+}
+
+log_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# 检查是否为root用户
+if [[ $EUID -ne 0 ]]; then
+   log_error "此脚本需要root权限运行"
+   exit 1
+fi
+
+# 设置变量
+PROJECT_DIR="/opt/matrix-server"
+DOMAIN="cjystx.top"
+MATRIX_DOMAIN="matrix.cjystx.top"
+ADMIN_EMAIL="admin@cjystx.top"
+
+log_info "开始部署简化版 Matrix 服务器..."
+log_info "域名: $DOMAIN"
+log_info "Matrix 服务器: $MATRIX_DOMAIN"
+log_info "管理员邮箱: $ADMIN_EMAIL"
+
+# 1. 系统更新和优化
+log_info "更新系统并优化..."
+apt update && apt upgrade -y
+
+# 2. 安装Docker
+log_info "安装Docker..."
+if ! command -v docker &> /dev/null; then
+    curl -fsSL https://get.docker.com -o get-docker.sh
+    sh get-docker.sh
+    systemctl enable docker
+    systemctl start docker
+    rm get-docker.sh
+fi
+
+# 3. 安装Docker Compose
+log_info "安装Docker Compose..."
+if ! command -v docker-compose &> /dev/null; then
+    curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+    chmod +x /usr/local/bin/docker-compose
+    ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
+fi
+
+# 4. 配置防火墙
+log_info "配置防火墙..."
+ufw --force enable << EOF
+y
+EOF
+ufw allow 22/tcp
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw --force enable
+
+# 5. 创建项目目录
+log_info "创建项目目录..."
+mkdir -p $PROJECT_DIR
+cd $PROJECT_DIR
+
+mkdir -p {
+    synapse/{data,media,logs},
+    postgres/data,
+    well-known/matrix,
+    ssl
+}
+
+# 6. 生成随机密码
+log_info "生成安全密钥..."
+POSTGRES_PASSWORD=$(openssl rand -base64 32)
+REGISTRATION_SECRET=$(openssl rand -base64 32)
+MACAROON_SECRET_KEY=$(openssl rand -base64 32)
+FORM_SECRET=$(openssl rand -base64 32)
+
+# 7. 创建环境变量文件
+log_info "创建环境变量文件..."
+cat > .env << EOF
+# 服务器配置
+MATRIX_SERVER_NAME=$MATRIX_DOMAIN
+MATRIX_DOMAIN=$DOMAIN
+ADMIN_EMAIL=$ADMIN_EMAIL
+
+# 数据库配置
+POSTGRES_DB=synapse
+POSTGRES_USER=synapse
+POSTGRES_PASSWORD=$POSTGRES_PASSWORD
+
+# 安全密钥
+REGISTRATION_SHARED_SECRET=$REGISTRATION_SECRET
+MACAROON_SECRET_KEY=$MACAROON_SECRET_KEY
+FORM_SECRET=$FORM_SECRET
+
+# 功能配置
+ENABLE_REGISTRATION=false
+MAX_UPLOAD_SIZE=10M
+REPORT_STATS=no
+
+# 好友功能配置
+FRIENDS_ENABLED=true
+MAX_FRIENDS_PER_USER=200
+FRIEND_REQUEST_TIMEOUT=604800
+
+# 性能优化配置（极简）
+SYNAPSE_CACHE_FACTOR=0.3
+SYNAPSE_EVENT_CACHE_SIZE=1000
+EOF
+
+chmod 600 .env
+
+# 8. 创建 Dockerfile
+log_info "创建 Dockerfile..."
+cat > Dockerfile << 'EOF'
+FROM python:3.9-slim
+
+# 安装最小必需的系统依赖
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libpq-dev \
+    libffi-dev \
+    libssl-dev \
+    libxml2-dev \
+    libxslt1-dev \
+    zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# 设置工作目录
+WORKDIR /synapse
+
+# 安装Poetry
+RUN pip install poetry==1.6.1
+
+# 配置Poetry
+RUN poetry config virtualenvs.create false
+
+# 复制依赖文件
+COPY pyproject.toml poetry.lock* ./
+
+# 安装生产依赖
+RUN poetry install --only=main --no-dev --no-interaction --no-ansi
+
+# 复制项目代码
+COPY . .
+
+# 创建数据目录
+RUN mkdir -p /data /media /logs
+
+# 设置环境变量
+ENV SYNAPSE_CONFIG_PATH=/data/homeserver.yaml \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONOPTIMIZE=1
+
+# 暴露端口
+EXPOSE 8008
+
+# 启动命令
+CMD ["python", "-m", "synapse.app.homeserver"]
+EOF
+
+# 9. 创建 docker-compose.yml
+log_info "创建 Docker Compose 配置..."
+cat > docker-compose.yml << EOF
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: matrix-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=\${POSTGRES_DB}
+      - POSTGRES_USER=\${POSTGRES_USER}
+      - POSTGRES_PASSWORD=\${POSTGRES_PASSWORD}
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    volumes:
+      - ./postgres/data:/var/lib/postgresql/data
+      - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    networks:
+      - matrix-network
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+          cpus: '0.2'
+
+  synapse:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: matrix-synapse
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    environment:
+      - SYNAPSE_SERVER_NAME=\${MATRIX_SERVER_NAME}
+      - SYNAPSE_REPORT_STATS=\${REPORT_STATS}
+      - SYNAPSE_CONFIG_PATH=/data/homeserver.yaml
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=\${POSTGRES_DB}
+      - POSTGRES_USER=\${POSTGRES_USER}
+      - POSTGRES_PASSWORD=\${POSTGRES_PASSWORD}
+      - REGISTRATION_SHARED_SECRET=\${REGISTRATION_SHARED_SECRET}
+      - MACAROON_SECRET_KEY=\${MACAROON_SECRET_KEY}
+      - FORM_SECRET=\${FORM_SECRET}
+      - SYNAPSE_CACHE_FACTOR=\${SYNAPSE_CACHE_FACTOR}
+      - SYNAPSE_EVENT_CACHE_SIZE=\${SYNAPSE_EVENT_CACHE_SIZE}
+    volumes:
+      - ./synapse/data:/data
+      - ./synapse/media:/media
+      - ./synapse/logs:/logs
+    networks:
+      - matrix-network
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: '0.6'
+
+  well-known:
+    image: nginx:alpine
+    container_name: matrix-well-known
+    restart: unless-stopped
+    volumes:
+      - ./well-known:/usr/share/nginx/html
+      - ./well-known.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - matrix-network
+    deploy:
+      resources:
+        limits:
+          memory: 32M
+          cpus: '0.05'
+
+networks:
+  matrix-network:
+    driver: bridge
+EOF
+
+# 10. 创建 well-known 配置
+log_info "创建 well-known 配置..."
+cat > well-known.conf << EOF
+events {
+    worker_connections 1024;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/json;
+    
+    server {
+        listen 80;
+        server_name _;
+        
+        location /.well-known/matrix/ {
+            root /usr/share/nginx/html;
+            add_header Content-Type application/json;
+            add_header Access-Control-Allow-Origin *;
+            add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS";
+            add_header Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization";
+            
+            expires 1h;
+            add_header Cache-Control "public, immutable";
+        }
+        
+        location / {
+            return 404;
+        }
+    }
+}
+EOF
+
+cat > well-known/matrix/server << EOF
+{
+  "m.server": "$MATRIX_DOMAIN:443"
+}
+EOF
+
+cat > well-known/matrix/client << EOF
+{
+  "m.homeserver": {
+    "base_url": "https://$MATRIX_DOMAIN"
+  },
+  "m.identity_server": {
+    "base_url": "https://vector.im"
+  }
+}
+EOF
+
+# 11. 创建 PostgreSQL 配置
+log_info "创建 PostgreSQL 配置..."
+cat > postgres/postgresql.conf << EOF
+# 低配服务器 PostgreSQL 配置
+shared_buffers = 64MB
+effective_cache_size = 256MB
+maintenance_work_mem = 32MB
+checkpoint_completion_target = 0.9
+wal_buffers = 4MB
+default_statistics_target = 50
+max_connections = 50
+work_mem = 2MB
+random_page_cost = 2.0
+effective_io_concurrency = 1
+EOF
+
+# 12. 系统优化
+log_info "应用系统优化..."
+cat > /etc/sysctl.d/99-matrix-minimal.conf << EOF
+# 低配服务器优化配置
+fs.file-max = 16384
+net.core.rmem_max = 4194304
+net.core.wmem_max = 4194304
+net.ipv4.tcp_rmem = 4096 87380 4194304
+net.ipv4.tcp_wmem = 4096 32768 4194304
+net.ipv4.tcp_fin_timeout = 30
+net.ipv4.tcp_keepalive_time = 60
+net.ipv4.ip_local_port_range = 1024 32768
+vm.swappiness = 10
+vm.vfs_cache_pressure = 50
+EOF
+
+sysctl -p /etc/sysctl.d/99-matrix-minimal.conf
+
+# 13. 等待用户上传项目代码
+log_warn "请使用 SFTP 工具将项目代码上传到 $PROJECT_DIR"
+log_warn "上传完成后，请按 Enter 键继续..."
+read -p ""
+
+# 14. 验证项目文件
+log_info "验证项目文件..."
+if [ ! -f "synapse/app/homeserver.py" ]; then
+    log_error "项目文件不存在，请确保已正确上传项目代码"
+    exit 1
+fi
+
+# 15. 启动服务
+log_info "启动服务..."
+docker-compose up -d --build
+
+# 等待服务启动
+log_info "等待服务启动..."
+sleep 60
+
+# 16. 检查服务状态
+log_info "检查服务状态..."
+docker-compose ps
+
+# 17. 生成 Synapse 配置
+log_info "生成 Synapse 配置..."
+docker-compose exec synapse python -m synapse.app.homeserver \
+  --server-name=$MATRIX_DOMAIN \
+  --config-path=/data/homeserver.yaml \
+  --generate-config \
+  --report-stats=no
+
+# 18. 创建优化配置
+log_info "创建优化配置..."
+docker-compose exec synapse tee /data/homeserver.yaml > /dev/null << EOF
+server_name: "$MATRIX_DOMAIN"
+pid_file: /data/homeserver.pid
+web_client_location: https://app.element.io/
+public_baseurl: https://$MATRIX_DOMAIN/
+
+listeners:
+  - port: 8008
+    tls: false
+    type: http
+    x_forwarded: true
+    bind_addresses: ['0.0.0.0']
+    resources:
+      - names: [client, federation]
+        compress: false
+
+database:
+  name: psycopg2
+  args:
+    user: \${POSTGRES_USER}
+    password: "\${POSTGRES_PASSWORD}"
+    database: \${POSTGRES_DB}
+    host: postgres
+    port: 5432
+    cp_min: 1
+    cp_max: 2
+
+event_persistence:
+  background_updates: true
+  persistence_targets: 
+    - target: "database"
+      delay_before: 500
+
+caches:
+  global_factor: 0.3
+  event_cache_size: 1000
+
+log_config: "/data/\${MATRIX_SERVER_NAME}.log.config"
+
+media_store_path: "/data/media"
+max_upload_size: "10M"
+media_retention:
+  local_media_lifetime: 7d
+  remote_media_lifetime: 3d
+
+enable_registration: \${ENABLE_REGISTRATION}
+registration_shared_secret: "\${REGISTRATION_SHARED_SECRET}"
+
+macaroon_secret_key: "\${MACAROON_SECRET_KEY}"
+form_secret: "\${FORM_SECRET}"
+
+friends:
+  enabled: \${FRIENDS_ENABLED}
+  max_friends_per_user: \${MAX_FRIENDS_PER_USER}
+  friend_request_timeout: \${FRIEND_REQUEST_TIMEOUT}
+  allow_cross_domain_friends: true
+
+enable_presence: true
+allow_device_name_lookup: false
+
+federation_domain_whitelist: []
+report_stats: \${REPORT_STATS}
+url_preview_enabled: false
+
+stream_writers:
+  events:
+    writers:
+      - type: directory
+        path: /data/events
+        max_file_size: 128MB
+        max_files: 2
+
+enable_metrics: false
+enable_registration_captcha: false
+enable_3pid_lookup: false
+suppress_key_server: true
+EOF
+
+# 19. 重启 Synapse
+log_info "重启 Synapse..."
+docker-compose restart synapse
+
+# 20. 显示完成信息
+log_info "部署完成！"
+echo ""
+echo "==============================================="
+echo "🎉 简化版 Matrix 服务器部署完成！"
+echo "==============================================="
+echo ""
+echo "📋 接下来的步骤："
+echo ""
+echo "1. 访问服务器: http://$(curl -s ifconfig.me)"
+echo "2. 创建管理员用户:"
+echo "   docker-compose exec synapse register_new_matrix_user -c /data/homeserver.yaml -a http://localhost:8008"
+echo ""
+echo "3. 使用 Element Web 客户端连接:"
+echo "   - 访问: https://app.element.io"
+echo "   - 服务器地址: http://$(curl -s ifconfig.me)"
+echo "   - 使用刚创建的管理员账号登录"
+echo ""
+echo "🔧 管理命令："
+echo "   - 查看状态: docker-compose ps"
+echo "   - 查看日志: docker-compose logs -f synapse"
+echo "   - 重启服务: docker-compose restart synapse"
+echo ""
+echo "📁 项目目录: $PROJECT_DIR"
+echo ""
+echo "⚠️  注意事项："
+echo "   - 服务器配置为极简模式，适合1-2个用户"
+echo "   - 定期检查内存使用情况"
+echo "   - 建议定期备份数据"
+echo "==============================================="
+echo ""
+
+log_info "部署脚本执行完成！"
+```
+
 ## 总结
 
-这个简化版的部署指南专门为低配服务器设计，具有以下特点：
+这个优化版本的简化部署指南专门为低配服务器设计，具有以下特点：
 
-### 主要特性
+### 🎯 主要优化特性
 
-1. **最低系统要求**: 1核2GB内存，20GB存储
-2. **精简架构**: 只包含核心组件（NPM + PostgreSQL + Synapse）
-3. **使用项目代码**: 直接使用我们项目的Synapse代码，不是官方镜像
-4. **包含好友功能**: 支持我们项目特有的好友管理功能
-5. **资源优化**: 限制了各容器的资源使用，适合低配服务器
-6. **简化配置**: 移除了复杂的监控和缓存组件
+1. **极低系统要求**: 1.5GB内存+1核CPU，15GB存储
+2. **精简架构**: 移除了Nginx Proxy Manager，使用轻量级Nginx
+3. **资源优化**: 严格限制各组件资源使用
+4. **性能调优**: 针对低配服务器的专门优化配置
+5. **一键部署**: 提供完整的自动化部署脚本
 
-### 项目特色
+### 📊 资源使用预估
 
-- **好友管理**: 完整的好友添加、删除、请求功能
+- **PostgreSQL**: 384MB内存，0.2核CPU
+- **Synapse**: 768MB内存，0.6核CPU  
+- **Nginx**: 128MB内存，0.2核CPU
+- **Well-known**: 32MB内存，0.05核CPU
+- **总计**: 约1.3GB内存，1核CPU
+
+### 🚀 部署方式
+
+1. **手动部署**: 按照文档步骤逐步部署
+2. **一键部署**: 使用提供的简化版一键部署脚本
+3. **分阶段部署**: 先部署基础版本，后续根据需要添加功能
+
+### 📝 项目特色
+
+- **好友功能**: 完整的好友管理系统
 - **跨域支持**: 支持跨域好友关系
-- **自定义配置**: 基于我们项目的优化配置
+- **低配优化**: 专门针对资源受限环境优化
+- **易于维护**: 简化的架构和配置
 
-### 部署流程
+### 🎯 适用场景
 
-1. **复制代码**: 将项目代码复制到服务器
-2. **本地构建**: 使用Dockerfile构建本地镜像
-3. **配置启动**: 生成配置文件并启动服务
-4. **代理配置**: 通过Nginx Proxy Manager配置SSL
-
-适合个人使用或小型团队的Matrix服务器部署，特别是需要好友功能的场景。
+- **个人服务器**: 1-2个用户的小型Matrix服务器
+- **测试环境**: 开发和测试用途
+- **学习用途**: 学习Matrix协议和Synapse
+- **小型团队**: 5人以下的小团队
 
 ---
 
-**注意事项:**
+**⚠️ 重要提醒:**
 
-1. **代码同步**: 每次项目代码更新后，需要重新上传相关文件并重新构建镜像
-2. **定期备份**: 备份数据库、配置文件和媒体文件
-3. **资源监控**: 监控服务器资源使用情况
-4. **性能调优**: 根据实际使用情况调整资源限制
+1. **性能限制**: 此配置为极简模式，仅适合少量用户
+2. **扩展建议**: 用户增多时建议升级服务器配置
+3. **定期监控**: 建议定期监控资源使用情况
+4. **备份重要**: 定期备份数据和配置文件
 5. **安全更新**: 保持系统和依赖的安全更新
-6. **扩展考虑**: 如果用户增多，建议升级服务器配置或添加缓存组件
+
+这个优化版本能够在1.5GB内存的服务器上稳定运行，为低配环境提供了一个可用的Matrix服务器解决方案。

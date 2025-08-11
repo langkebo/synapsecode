@@ -25,6 +25,7 @@ from .database import DatabaseConfig
 from .emailconfig import EmailConfig
 from .experimental import ExperimentalConfig
 from .federation import FederationConfig
+from .friends import FriendsConfig
 from .jwt import JWTConfig
 from .key import KeyConfig
 from .logger import LoggingConfig
@@ -83,6 +84,7 @@ class HomeServerConfig(RootConfig):
         JWTConfig,
         AuthConfig,
         EmailConfig,
+        FriendsConfig,
         PasswordAuthProviderConfig,
         PushConfig,
         SpamCheckerConfig,

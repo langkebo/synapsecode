@@ -1,0 +1,54 @@
+# Development override file
+# Use with: docker-compose -f docker-compose.yml -f docker-compose.override.yml up
+
+version: '3.8'
+
+services:
+  # Development mode for Synapse
+  synapse:
+    environment:
+      - SYNAPSE_CONFIG_PATH=/data/homeserver.yaml
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - .:/app:ro
+      - synapse_data:/data
+      - synapse_media:/media
+      - synapse_logs:/logs
+    command: ["python", "-m", "synapse.app.homeserver"]
+    profiles:
+      - dev
+
+  # PostgreSQL development configuration
+  postgres:
+    environment:
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    profiles:
+      - dev
+
+  # Redis development configuration
+  redis:
+    command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
+    profiles:
+      - dev
+
+  # Development tools
+  dev-tools:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    volumes:
+      - .:/app
+      - poetry_cache:/root/.cache/pypoetry
+    working_dir: /app
+    command: ["tail", "-f", "/dev/null"]
+    profiles:
+      - dev-tools
+
+# Development volumes
+volumes:
+  poetry_cache:
+    driver: local

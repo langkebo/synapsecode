@@ -56,15 +56,68 @@ class FriendsHandler:
         self.profile_handler = hs.get_profile_handler()
         self._is_mine_server_name = hs.is_mine_server_name
         
-        # 速率限制：每个用户每小时最多发送10个好友请求
-        self._rate_limit_cache: Dict[str, List[float]] = {}
-        self._max_requests_per_hour = 10
-        self._rate_limit_window = 3600  # 1小时
+        # 使用配置中的速率限制设置
+        self.config = hs.config.friends
+        self._max_requests_per_hour = self.config.max_requests_per_hour
+        self._rate_limit_window = self.config.rate_limit_window
         
-    def _check_rate_limit(self, user_id: str) -> None:
+        # 使用Redis或内存缓存进行速率限制
+        if hasattr(hs, 'get_redis_client') and hs.config.redis.redis_enabled:
+            self._redis_client = hs.get_redis_client()
+            self._use_redis_rate_limit = True
+        else:
+            self._rate_limit_cache: Dict[str, List[float]] = {}
+            self._use_redis_rate_limit = False
+    
+    async def _check_rate_limit(self, user_id: str) -> None:
         """检查用户是否超过速率限制"""
         current_time = time.time()
         
+        if self._use_redis_rate_limit and hasattr(self, '_redis_client'):
+            # 使用Redis进行分布式速率限制
+            await self._check_rate_limit_redis(user_id, current_time)
+        else:
+            # 使用内存缓存（仅适用于单进程部署）
+            self._check_rate_limit_memory(user_id, current_time)
+    
+    async def _check_rate_limit_redis(self, user_id: str, current_time: float) -> None:
+        """使用Redis进行速率限制检查"""
+        try:
+            redis_key = f"friend_request_rate_limit:{user_id}"
+            
+            # 使用Redis的sorted set来存储请求时间戳
+            pipeline = self._redis_client.pipeline()
+            
+            # 清理过期的请求记录
+            pipeline.zremrangebyscore(redis_key, 0, current_time - self._rate_limit_window)
+            
+            # 获取当前请求数量
+            pipeline.zcard(redis_key)
+            
+            # 添加当前请求
+            pipeline.zadd(redis_key, {str(current_time): current_time})
+            
+            # 设置过期时间
+            pipeline.expire(redis_key, self._rate_limit_window)
+            
+            results = await pipeline.execute()
+            
+            current_count = results[1]
+            
+            if current_count >= self._max_requests_per_hour:
+                raise SynapseError(
+                    429, 
+                    f"Rate limit exceeded. Maximum {self._max_requests_per_hour} friend requests per hour.",
+                    Codes.LIMIT_EXCEEDED
+                )
+                
+        except Exception as e:
+            logger.error(f"Redis rate limit check failed for user {user_id}: {e}")
+            # 如果Redis失败，回退到内存限制
+            self._check_rate_limit_memory(user_id, current_time)
+    
+    def _check_rate_limit_memory(self, user_id: str, current_time: float) -> None:
+        """使用内存缓存进行速率限制检查"""
         if user_id not in self._rate_limit_cache:
             self._rate_limit_cache[user_id] = []
             

@@ -1,0 +1,299 @@
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "synapse"
+version = "1.0.0"
+description = "Matrix homeserver implementation with friends functionality"
+authors = ["Your Name <your.email@example.com>"]
+license = "Apache-2.0"
+readme = "README.md"
+homepage = "https://github.com/yourusername/synapse-friends"
+repository = "https://github.com/yourusername/synapse-friends"
+documentation = "https://github.com/yourusername/synapse-friends/docs"
+keywords = ["matrix", "homeserver", "friends", "chat"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Communications :: Chat",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+]
+
+[tool.poetry.dependencies]
+python = "^3.9"
+
+# Core Matrix dependencies
+twisted = "^22.10.0"
+pyopenssl = "^23.0.0"
+service-identity = "^21.1.0"
+idna = "^3.4"
+pyasn1 = "^0.5.0"
+pyasn1-modules = "^0.3.0"
+unpaddedbase64 = "^2.1.0"
+canonicaljson = "^2.0.0"
+signedjson = "^1.1.4"
+pynacl = "^1.5.0"
+cryptography = "^41.0.0"
+pillow = "^10.0.0"
+packaging = "^23.0"
+prometheus-client = "^0.17.0"
+attrs = "^23.0.0"
+pydantic = "^1.10.0"
+
+# Database dependencies
+psycopg2-binary = "^2.9.0"
+sqlalchemy = "^2.0.0"
+alembic = "^1.11.0"
+
+# HTTP/Web dependencies
+treq = "^22.10.0"
+jinja2 = "^3.1.0"
+bleach = "^6.0.0"
+phonenumbers = "^8.13.0"
+ijson = "^3.2.0"
+
+# Performance/Caching dependencies
+lmdb = "^1.4.0"
+sortedcontainers = "^2.4.0"
+
+# Utility dependencies
+pyyaml = "^6.0"
+ujson = "^5.8.0"
+msgpack = "^1.0.0"
+
+# Optional dependencies for extras
+[tool.poetry.extras]
+# Database extras
+postgres = ["psycopg2-binary"]
+sqlite = ["aiosqlite"]
+
+# Cache extras
+redis = ["redis"]
+memcache = ["pymemcache"]
+
+# Monitoring extras
+metrics = ["prometheus-client"]
+statsd = ["statsd"]
+
+# Testing extras
+test = [
+    "pytest",
+    "pytest-twisted",
+    "pytest-cov",
+    "pytest-xdist",
+    "pytest-mock",
+    "factory-boy",
+    "parameterized",
+    "freezegun",
+    "mock",
+    "twisted[test]",
+]
+
+# Development extras
+dev = [
+    "black",
+    "isort",
+    "flake8",
+    "mypy",
+    "pre-commit",
+    "sphinx",
+    "sphinx-rtd-theme",
+    "towncrier",
+]
+
+[tool.poetry.group.dev.dependencies]
+# Development dependencies
+pytest = "^7.4.0"
+pytest-twisted = "^1.14.0"
+pytest-cov = "^4.1.0"
+pytest-xdist = "^3.3.0"
+pytest-mock = "^3.11.0"
+factory-boy = "^3.3.0"
+parameterized = "^0.9.0"
+freezegun = "^1.2.0"
+mock = "^5.1.0"
+twisted = {extras = ["test"], version = "^22.10.0"}
+
+# Code quality
+black = "^23.7.0"
+isort = "^5.12.0"
+flake8 = "^6.0.0"
+mypy = "^1.5.0"
+pre-commit = "^3.3.0"
+
+# Documentation
+sphinx = "^7.1.0"
+sphinx-rtd-theme = "^1.3.0"
+towncrier = "^23.6.0"
+
+# Build tools
+build = "^1.0.0"
+twine = "^4.0.0"
+
+[tool.poetry.scripts]
+# Command line tools
+synapse-homeserver = "synapse.app.homeserver:main"
+register-new-matrix-user = "synapse._scripts.register_new_matrix_user:main"
+generate-config = "synapse._scripts.generate_config:main"
+hash-password = "synapse._scripts.hash_password:main"
+export-signing-key = "synapse._scripts.export_signing_key:main"
+generate-signing-key = "synapse._scripts.generate_signing_key:main"
+synctl = "synapse._scripts.synctl:main"
+
+[tool.black]
+line-length = 88
+target-version = ['py39']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # Exclude specific directories
+  | _build
+  | buck-out
+  | build
+  | dist
+  | venv
+  | env
+  | .venv
+  | .env
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+include_trailing_comma = true
+force_grid_wrap = 0
+use_parentheses = true
+ensure_newline_before_comments = true
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = [
+    "twisted.*",
+    "zope.interface.*",
+    "yaml.*",
+    "psycopg2.*",
+    "lmdb.*",
+    "prometheus_client.*",
+    "jinja2.*",
+    "bleach.*",
+    "phonenumbers.*",
+    "ijson.*",
+    "sortedcontainers.*",
+    "pynacl.*",
+    "cryptography.*",
+    "pillow.*",
+    "packaging.*",
+    "attrs.*",
+    "pydantic.*",
+    "treq.*",
+    "service_identity.*",
+    "idna.*",
+    "pyasn1.*",
+    "pyasn1_modules.*",
+    "unpaddedbase64.*",
+    "canonicaljson.*",
+    "signedjson.*",
+    "msgpack.*",
+    "ujson.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--cov=synapse",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-report=xml",
+    "--cov-fail-under=80",
+]
+markers = [
+    "asyncio: mark test as async",
+    "slow: mark test as slow",
+    "integration: mark test as integration test",
+    "unittest: mark test as unittest",
+]
+
+[tool.coverage.run]
+source = ["synapse"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "*/__init__.py",
+    "*/_scripts/*",
+    "*/docs/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+
+[tool.towncrier]
+filename = "CHANGES.md"
+directory = "changes"
+start_string = "<!-- towncrier release notes start -->\n"
+title_format = "## {name} ({version}) - {project_date}"
+issue_format = "[#{issue}](https://github.com/yourusername/synapse-friends/issues/{issue})"
+
+[[tool.towncrier.type]]
+directory = "feature"
+name = "Features"
+showcontents = true
+
+[[tool.towncrier.type]]
+directory = "bugfix"
+name = "Bugfixes"
+showcontents = true
+
+[[tool.towncrier.type]]
+directory = "breaking"
+name = "Breaking Changes"
+showcontents = true
+
+[[tool.towncrier.type]]
+directory = "documentation"
+name = "Documentation"
+showcontents = true
+
+[[tool.towncrier.type]]
+directory = "internal"
+name = "Internal Changes"
+showcontents = true
