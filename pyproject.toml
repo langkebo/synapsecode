@@ -68,6 +68,12 @@ pyyaml = "^6.0"
 ujson = "^5.8.0"
 msgpack = "^1.0.0"
 
+# Optional dependencies
+aiosqlite = "^0.19.0"
+redis = "^4.6.0"
+pymemcache = "^4.0.0"
+statsd = "^4.0.0"
+
 # Optional dependencies for extras
 [tool.poetry.extras]
 # Database extras
