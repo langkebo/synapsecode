@@ -46,12 +46,26 @@
 
 ## 快速开始
 
+### GitHub快速部署
+
+```bash
+# 方法1: 使用GitHub设置脚本（推荐）
+./setup-github.sh
+
+# 方法2: 手动GitHub部署
+# 1. 在GitHub创建新仓库
+# 2. 复制仓库URL
+# 3. 运行以下命令：
+git remote add origin https://github.com/yourusername/matrix-synapse-friends.git
+git push -u origin main
+```
+
 ### 一键部署
 
 ```bash
-# 下载项目
-git clone https://github.com/yourusername/synapse-friends.git
-cd synapse-friends
+# 克隆项目
+git clone https://github.com/yourusername/matrix-synapse-friends.git
+cd matrix-synapse-friends
 
 # 运行一键部署脚本
 sudo ./deploy.sh
