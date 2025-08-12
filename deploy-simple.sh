@@ -37,7 +37,7 @@ else
   print_info "安装基础依赖..."
   apt-get update -y
   DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    ca-certificates curl gnupg lsb-release openssl jq envsubst gettext-base
+    ca-certificates curl gnupg lsb-release openssl jq gettext-base
 
   # Docker安装
   if ! command -v docker >/dev/null 2>&1; then
@@ -154,7 +154,7 @@ listeners:
       - names: [client, federation]
         compress: false
 
-# 数据库配置
+# 数据库配置 - 为 1vCPU/2GB RAM 服务器优化
 database:
   name: psycopg2
   args:
@@ -163,8 +163,8 @@ database:
     database: "${POSTGRES_DB}"
     host: postgres
     port: 5432
-    cp_min: 1
-    cp_max: 3
+    cp_min: 1              # 最小连接数（低配服务器）
+    cp_max: 2              # 最大连接数（原3，升级服务器后可调为5-10）
     connect_timeout: 10
 
 # 日志配置
@@ -174,14 +174,26 @@ log_config: "/data/log.config"
 media_store_path: "/data/media"
 uploads_path: "/data/uploads"
 
-# 性能优化
+# 性能优化 - 为 1vCPU/2GB RAM 服务器优化
 caches:
-  global_factor: 0.3
-  event_cache_size: 1000
+  global_factor: 0.2      # 降低缓存以节省内存（原0.3，升级服务器后可调为0.5-1.0）
+  event_cache_size: 500   # 降低事件缓存（原1000，升级服务器后可调为2000-5000）
 
 # 注册配置
-enable_registration: ${ENABLE_REGISTRATION}
-registration_shared_secret: "${REGISTRATION_SHARED_SECRET}"
+# 旧配置（保留作为升级服务器后的参考）：
+# enable_registration: ${ENABLE_REGISTRATION}
+# registration_shared_secret: "${REGISTRATION_SHARED_SECRET}"
+# 说明：以上为原有配置，依赖共享密钥的注册流程。
+# -----------------------------------------------
+# 当前配置：开启无验证注册，且限制注册间隔为10分钟
+enable_registration: true
+# 禁用三方验证（如邮件/验证码），保持开放注册
+# 注意：生产环境下建议开启验证或使用邀请制
+
+# 注册速率限制（10分钟内最多1次）
+rc_registration:
+  per_second: 0.0017   # ≈ 每10分钟 1 次 (1/600)
+  burst_count: 1       # 不允许突发多次注册
 
 # 好友功能
 friends:
@@ -192,20 +204,17 @@ friends:
     rate_limit_window: 3600
 
 # 速率限制
-rc_registration:
-  per_second: 0.1
-  burst_count: 3
-
+# rc_registration 已在上方设置为每10分钟1次
 rc_login:
   per_second: 0.2
   burst_count: 5
 
 rc_message:
-  per_second: 1
-  burst_count: 20
+  per_second: 0.5   # 降低消息速率以降低CPU负载（升级后可调回1）
+  burst_count: 10   # 降低突发量（升级后可调回20）
 
-# 媒体配置
-max_upload_size: "10M"
+# 媒体配置（低配优化）
+max_upload_size: "8M"   # 降低上传大小限制（升级后可调为 20M/50M）
 media_retention:
   remote_media_lifetime: "7d"
   local_media_lifetime: "30d"
@@ -305,7 +314,8 @@ print_success "well-known 配置完成"
 print_info "生成 docker-compose.simple.yml..."
 
 cat > docker-compose.simple.yml << 'EOF'
-version: '3.8'
+# Docker Compose 配置 - 为 1vCPU/2GB RAM 服务器优化
+# 升级服务器后可调整资源限制
 
 services:
   postgres:
@@ -317,25 +327,36 @@ services:
       - POSTGRES_USER=${POSTGRES_USER:-synapse}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+      # 为低配服务器优化的数据库设置
+      - POSTGRES_SHARED_BUFFERS=128MB
+      - POSTGRES_EFFECTIVE_CACHE_SIZE=512MB
+      - POSTGRES_WORK_MEM=4MB
+      - POSTGRES_MAINTENANCE_WORK_MEM=64MB
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - matrix-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-synapse}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      interval: 30s  # 降低检查频率
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     deploy:
       resources:
         limits:
-          memory: 512M
-          cpus: '0.3'
+          # 低配服务器资源分配 (当前: 1vCPU/2GB)
+          memory: 400M
+          cpus: '0.25'
+        # 升级服务器后可调整为:
+        # limits:
+        #   memory: 1G
+        #   cpus: '0.5'
 
   synapse:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.simple
     container_name: matrix-synapse
     restart: unless-stopped
     depends_on:
@@ -343,6 +364,9 @@ services:
         condition: service_healthy
     environment:
       - SYNAPSE_CONFIG_PATH=/data/homeserver.yaml
+      # 优化 Python 内存使用
+      - PYTHONOPTIMIZE=1
+      - PYTHONDONTWRITEBYTECODE=1
     volumes:
       - ./data:/data
       - ./media:/data/media
@@ -353,15 +377,20 @@ services:
       - matrix-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8008/_matrix/client/versions"]
-      interval: 30s
-      timeout: 10s
+      interval: 60s  # 降低检查频率节省资源
+      timeout: 15s
       retries: 3
-      start_period: 60s
+      start_period: 120s  # 给低配服务器更多启动时间
     deploy:
       resources:
         limits:
-          memory: 1G
+          # 低配服务器资源分配 (当前: 1vCPU/2GB)
+          memory: 1.2G  # 给synapse分配大部分内存
           cpus: '0.7'
+        # 升级服务器后可调整为:
+        # limits:
+        #   memory: 2G
+        #   cpus: '1.5'
 
   well-known:
     image: nginx:alpine
@@ -376,8 +405,13 @@ services:
     deploy:
       resources:
         limits:
-          memory: 32M
+          # 低配服务器资源分配
+          memory: 24M
           cpus: '0.05'
+        # 升级服务器后可调整为:
+        # limits:
+        #   memory: 64M
+        #   cpus: '0.1'
 
 volumes:
   postgres_data:
@@ -414,7 +448,9 @@ ${COMPOSE} -f docker-compose.simple.yml down --remove-orphans >/dev/null 2>&1 ||
 
 # 构建并启动服务
 print_info "构建和启动容器（这可能需要几分钟）..."
-${COMPOSE} -f docker-compose.simple.yml up -d --build
+# 先强制无缓存构建，避免使用旧的 Dockerfile 缓存
+${COMPOSE} -f docker-compose.simple.yml build --no-cache synapse
+${COMPOSE} -f docker-compose.simple.yml up -d
 
 # 等待服务就绪
 print_info "等待服务启动..."

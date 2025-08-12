@@ -49,7 +49,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Install runtime system dependencies
 RUN apt-get update && apt-get install -y \
     libpq5 \
-    libffi7 \
+    libffi8 \
     libssl3 \
     libjpeg62-turbo \
     libxml2 \
