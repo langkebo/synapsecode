@@ -348,7 +348,7 @@ services:
       - ./media:/data/media
       - ./uploads:/data/uploads
     ports:
-      - "8008:8008"
+      - "127.0.0.1:8008:8008"  # 只绑定本地地址，通过Nginx代理访问
     networks:
       - matrix-network
     healthcheck:

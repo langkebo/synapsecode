@@ -17,7 +17,7 @@ sudo ./deploy-minimal.sh
 
 - **CPU**: 1核心
 - **内存**: 2GB RAM
-- **存储**: 10GB SSD
+- **存储**: 40GB SSD
 - **网络**: 公网IP
 - **系统**: Ubuntu 20.04+ / Debian 10+
 
