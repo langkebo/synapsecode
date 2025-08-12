@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pytest_cache/
+.tox/
+.mypy_cache/
+.coverage*
+htmlcov/
+
+# Virtualenv
+.env/
+.venv/
+venv/
+ENV/
+
+# Editor/IDE
+.idea/
+.vscode/
+*.swp
+
+# Docker
+**/data/
+**/media/
+**/uploads/
+**/logs/
+**/postgres_data/
+
+# Synapse secrets
+.env
+.env.*
+!*.example
+!*.sample
+**/homeserver.yaml
+**/synapse.log.config
+well-known/.well-known/
+
+# Node & misc
+node_modules/
+dist/
+build/
