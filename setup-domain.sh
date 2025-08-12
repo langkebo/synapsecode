@@ -123,40 +123,17 @@ EOF
 print_success "well-known配置完成"
 
 #-----------------------------
-# Nginx配置
+# Nginx配置（HTTP版本，用于SSL证书申请）
 #-----------------------------
-print_info "配置Nginx反向代理..."
+print_info "配置Nginx反向代理（HTTP版本）..."
 
-# 创建Matrix服务器的Nginx配置
+# 创建Matrix服务器的HTTP版本Nginx配置
 cat > /etc/nginx/sites-available/${MATRIX_DOMAIN} << EOF
-# Matrix服务器配置 - ${MATRIX_DOMAIN}
+# Matrix服务器配置 - ${MATRIX_DOMAIN} (HTTP版本)
 server {
     listen 80;
     server_name ${MATRIX_DOMAIN};
-    return 301 https://\$server_name\$request_uri;
-}
 
-server {
-    listen 443 ssl http2;
-    server_name ${MATRIX_DOMAIN};
-
-    # SSL配置 (将由certbot自动配置)
-    ssl_certificate /etc/letsencrypt/live/${MATRIX_DOMAIN}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${MATRIX_DOMAIN}/privkey.pem;
-    
-    # SSL安全配置
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384;
-    ssl_prefer_server_ciphers off;
-    ssl_session_cache shared:SSL:10m;
-    ssl_session_timeout 10m;
-    
-    # 安全头部
-    add_header Strict-Transport-Security "max-age=63072000" always;
-    add_header X-Content-Type-Options nosniff;
-    add_header X-Frame-Options DENY;
-    add_header X-XSS-Protection "1; mode=block";
-    
     # 客户端最大请求大小
     client_max_body_size 50M;
     
@@ -185,38 +162,33 @@ server {
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_set_header Host \$host;
     }
+
+    # Certbot验证路径
+    location ~ /.well-known/acme-challenge/ {
+        root /var/www/html;
+        allow all;
+    }
 }
 EOF
 
-# 创建主域名的Nginx配置（用于well-known）
+# 创建主域名的HTTP版本Nginx配置
 cat > /etc/nginx/sites-available/${MAIN_DOMAIN} << EOF
-# 主域名配置 - ${MAIN_DOMAIN}
+# 主域名配置 - ${MAIN_DOMAIN} (HTTP版本)
 server {
     listen 80;
     server_name ${MAIN_DOMAIN};
-    return 301 https://\$server_name\$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name ${MAIN_DOMAIN};
-
-    # SSL配置 (将由certbot自动配置)
-    ssl_certificate /etc/letsencrypt/live/${MAIN_DOMAIN}/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/${MAIN_DOMAIN}/privkey.pem;
-    
-    # SSL安全配置
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384;
-    ssl_prefer_server_ciphers off;
-    ssl_session_cache shared:SSL:10m;
-    ssl_session_timeout 10m;
     
     # Well-known配置
     location /.well-known/matrix/ {
         root /var/www/matrix-well-known;
         default_type application/json;
         add_header Access-Control-Allow-Origin *;
+    }
+
+    # Certbot验证路径
+    location ~ /.well-known/acme-challenge/ {
+        root /var/www/html;
+        allow all;
     }
     
     # 根目录（可选）
@@ -234,7 +206,7 @@ ln -sf /etc/nginx/sites-available/${MAIN_DOMAIN} /etc/nginx/sites-enabled/
 # 测试Nginx配置
 nginx -t
 
-print_success "Nginx配置完成"
+print_success "Nginx HTTP配置完成"
 
 #-----------------------------
 # Well-known文件部署
@@ -258,30 +230,126 @@ print_success "well-known文件部署完成"
 #-----------------------------
 print_info "配置SSL证书..."
 
-# 重启Nginx以应用初始配置
+# 重启Nginx以应用初始HTTP配置
 systemctl reload nginx
 
 print_warning "准备申请SSL证书..."
-print_info "请确保以下域名的DNS已正确指向此服务器："
+print_info "请确保以下域名的DNS已正确指向此服务器（A记录/AAAA记录）："
 echo "   - ${MATRIX_DOMAIN}"
 echo "   - ${MAIN_DOMAIN}"
 echo ""
 
-# 申请SSL证书
+# 申请SSL证书（使用webroot方式，避免nginx插件改写配置）
 print_info "申请SSL证书（这可能需要几分钟）..."
+mkdir -p /var/www/html
 
-# 为Matrix域名申请证书
-if certbot --nginx -d ${MATRIX_DOMAIN} --non-interactive --agree-tos --email ${ADMIN_EMAIL} --redirect; then
+if certbot certonly --webroot -w /var/www/html -d ${MATRIX_DOMAIN} --non-interactive --agree-tos --email ${ADMIN_EMAIL}; then
     print_success "Matrix域名SSL证书申请成功"
 else
-    print_warning "Matrix域名SSL证书申请失败，请检查DNS配置"
+    print_warning "Matrix域名SSL证书申请失败，请检查DNS配置或稍后重试"
 fi
 
-# 为主域名申请证书
-if certbot --nginx -d ${MAIN_DOMAIN} --non-interactive --agree-tos --email ${ADMIN_EMAIL} --redirect; then
+if certbot certonly --webroot -w /var/www/html -d ${MAIN_DOMAIN} --non-interactive --agree-tos --email ${ADMIN_EMAIL}; then
     print_success "主域名SSL证书申请成功"
 else
-    print_warning "主域名SSL证书申请失败，请检查DNS配置"
+    print_warning "主域名SSL证书申请失败，请检查DNS配置或稍后重试"
+fi
+
+# 写入HTTPS版本server并将HTTP站点改为301跳转
+print_info "切换Nginx为HTTPS配置..."
+
+# 覆盖Matrix域名的HTTPS配置
+cat > /etc/nginx/sites-available/${MATRIX_DOMAIN} << EOF
+# Matrix服务器配置 - ${MATRIX_DOMAIN}
+server {
+    listen 80;
+    server_name ${MATRIX_DOMAIN};
+    return 301 https://\$server_name\$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name ${MATRIX_DOMAIN};
+
+    ssl_certificate /etc/letsencrypt/live/${MATRIX_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${MATRIX_DOMAIN}/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+
+    add_header Strict-Transport-Security "max-age=63072000" always;
+    add_header X-Content-Type-Options nosniff;
+    add_header X-Frame-Options DENY;
+    add_header X-XSS-Protection "1; mode=block";
+
+    client_max_body_size 50M;
+
+    location ~ ^(/_matrix|/_synapse/client) {
+        proxy_pass http://localhost:8008;
+        proxy_set_header X-Forwarded-For \$remote_addr;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Host \$host;
+        client_body_buffer_size 25M;
+        client_max_body_size 50M;
+        proxy_max_temp_file_size 0;
+        proxy_connect_timeout 30s;
+        proxy_send_timeout 30s;
+        proxy_read_timeout 30s;
+    }
+
+    location /_matrix/client/versions {
+        proxy_pass http://localhost:8008;
+        proxy_set_header X-Forwarded-For \$remote_addr;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Host \$host;
+    }
+}
+EOF
+
+# 覆盖主域名的HTTPS配置
+cat > /etc/nginx/sites-available/${MAIN_DOMAIN} << EOF
+# 主域名配置 - ${MAIN_DOMAIN}
+server {
+    listen 80;
+    server_name ${MAIN_DOMAIN};
+    return 301 https://\$server_name\$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name ${MAIN_DOMAIN};
+
+    ssl_certificate /etc/letsencrypt/live/${MAIN_DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${MAIN_DOMAIN}/privkey.pem;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 10m;
+
+    location /.well-known/matrix/ {
+        root /var/www/matrix-well-known;
+        default_type application/json;
+        add_header Access-Control-Allow-Origin *;
+    }
+
+    location / {
+        return 200 'Matrix Server Active';
+        add_header Content-Type text/plain;
+    }
+}
+EOF
+
+# 再次测试并重载
+if nginx -t; then
+    systemctl reload nginx
+    print_success "Nginx已切换为HTTPS配置"
+else
+    print_warning "HTTPS配置测试失败，请检查证书文件是否存在"
 fi
 
 # 设置证书自动更新
