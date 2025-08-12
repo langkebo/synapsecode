@@ -1,66 +1,122 @@
 #!/bin/bash
-# 完整重新部署脚本 - 清理并重新下载最新代码
 
-echo "🔄 Matrix Synapse 完整重新部署"
-echo "================================="
+# 完整的重新部署脚本
+# 用于在服务器上重新部署 Matrix Synapse
 
-# 检查是否为root用户
+set -e
+
+echo "=== Matrix Synapse 完整重新部署 ==="
+echo
+
+# 检查是否为 root 用户
 if [ "$EUID" -ne 0 ]; then
-    echo "❌ 请使用root用户运行此脚本"
-    echo "使用: sudo $0"
+    echo "❌ 请使用 root 权限运行此脚本"
+    echo "使用: sudo ./redeploy-complete.sh"
     exit 1
 fi
 
-# 询问确认
-echo "⚠️  这将删除所有现有容器和数据"
-read -p "确认继续? (y/n): " confirm
-if [ "$confirm" != "y" ]; then
-    echo "❌ 部署已取消"
-    exit 1
-fi
+# 设置工作目录
+WORK_DIR="/opt/synapsecode"
+cd "$WORK_DIR"
 
-# 停止并删除所有容器
-echo "🛑 停止所有容器..."
-docker stop $(docker ps -aq) 2>/dev/null || true
-docker rm $(docker ps -aq) 2>/dev/null || true
+echo "1. 停止现有服务..."
+docker-compose -f docker-compose.minimal.yml down 2>/dev/null || true
 
-# 删除所有镜像
-echo "🗑️ 删除所有镜像..."
-docker rmi $(docker images -q) 2>/dev/null || true
+echo "2. 拉取最新代码..."
+git pull origin main
 
-# 清理Docker系统
-echo "🧹 清理Docker系统..."
-docker system prune -a -f
+echo "3. 运行部署前检查..."
+./pre-deploy-check.sh
+
+echo "4. 清理 Docker 系统..."
+docker system prune -f
 docker volume prune -f
-docker network prune -f
 
-# 重启Docker服务
-echo "🔄 重启Docker服务..."
+echo "5. 配置 Docker 镜像加速..."
+mkdir -p /etc/docker
+cat > /etc/docker/daemon.json << 'EOF'
+{
+  "registry-mirrors": [
+    "https://docker.mirrors.ustc.edu.cn",
+    "https://hub-mirror.c.163.com",
+    "https://mirror.baidubce.com"
+  ],
+  "max-concurrent-downloads": 3,
+  "max-concurrent-uploads": 5
+}
+EOF
+
+echo "6. 重启 Docker 服务..."
+systemctl daemon-reload
 systemctl restart docker
 sleep 10
 
-# 备份现有项目（如果存在）
-if [ -d "synapsecode" ]; then
-    echo "💾 备份现有项目..."
-    mv synapsecode synapsecode.backup.$(date +%Y%m%d_%H%M%S)
+echo "7. 检查 Docker 服务状态..."
+if systemctl is-active --quiet docker; then
+    echo "✅ Docker 服务运行正常"
+else
+    echo "❌ Docker 服务启动失败"
+    exit 1
 fi
 
-# 重新下载项目
-echo "📥 重新下载最新代码..."
-git clone https://github.com/langkebo/synapsecode.git
-cd synapsecode
+echo "8. 拉取基础镜像..."
+docker pull postgres:15-alpine
+docker pull python:3.9-slim
+docker pull nginx:alpine
 
-# 设置权限
-echo "🔐 设置执行权限..."
-chmod +x *.sh
+echo "9. 检查环境变量..."
+if [ ! -f ".env" ]; then
+    echo "⚠️ .env 文件不存在，运行配置脚本..."
+    ./setup-domain.sh
+else
+    echo "✅ .env 文件已存在"
+fi
 
-# 使用简化版部署
-echo "🚀 开始部署..."
-./deploy-simple.sh
+echo "10. 构建并启动服务..."
+docker-compose -f docker-compose.minimal.yml up -d --build
 
-echo "✅ 重新部署完成！"
-echo ""
-echo "🔧 管理命令："
-echo "  查看状态: docker-compose -f docker-compose.simple.yml ps"
-echo "  查看日志: docker-compose -f docker-compose.simple.yml logs -f"
-echo "  停止服务: docker-compose -f docker-compose.simple.yml down"
+echo "11. 等待服务启动..."
+sleep 30
+
+echo "12. 检查服务状态..."
+docker-compose -f docker-compose.minimal.yml ps
+
+echo "13. 检查 Synapse 健康状态..."
+if docker-compose -f docker-compose.minimal.yml exec -T synapse curl -f http://localhost:8008/_matrix/client/versions >/dev/null 2>&1; then
+    echo "✅ Synapse 服务健康"
+else
+    echo "⚠️ Synapse 服务可能还在启动中"
+fi
+
+echo "14. 检查数据库连接..."
+if docker-compose -f docker-compose.minimal.yml exec -T postgres pg_isready -U synapse >/dev/null 2>&1; then
+    echo "✅ PostgreSQL 数据库连接正常"
+else
+    echo "❌ PostgreSQL 数据库连接失败"
+fi
+
+echo "15. 显示服务日志..."
+echo "=== Synapse 服务日志 ==="
+docker-compose -f docker-compose.minimal.yml logs --tail=20 synapse
+
+echo
+echo "=== 部署完成 ==="
+echo
+echo "📊 服务状态:"
+echo "  查看状态: sudo docker-compose -f docker-compose.minimal.yml ps"
+echo "  查看日志: sudo docker-compose -f docker-compose.minimal.yml logs -f"
+echo "  停止服务: sudo docker-compose -f docker-compose.minimal.yml down"
+echo
+echo "🔧 故障排除:"
+echo "  运行诊断: sudo ./diagnose.sh"
+echo "  重新部署: sudo ./redeploy-complete.sh"
+echo
+echo "🌐 访问地址:"
+echo "  Matrix 服务器: https://$(grep MATRIX_SERVER_NAME .env | cut -d'=' -f2)"
+echo "  Well-known 配置: https://$(grep MATRIX_SERVER_NAME .env | cut -d'=' -f2)/.well-known/matrix/server"
+echo
+echo "📝 注意事项:"
+echo "  1. 确保 Nginx 反向代理已正确配置"
+echo "  2. 确保 SSL 证书已安装"
+echo "  3. 防火墙已开放 443 端口"
+echo "  4. DNS 解析已正确配置"
