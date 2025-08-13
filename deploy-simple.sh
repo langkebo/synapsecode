@@ -248,8 +248,9 @@ push:
 # 完全禁用 email 功能 - 不设置 email 配置块以避免 notif_from 要求
 # email:
 #   enabled: false
-server_notices:
-  enabled: false
+# 完全禁用 server_notices 功能 - 不设置 server_notices 配置块以避免 system_mxid_localpart 要求
+# server_notices:
+#   enabled: false
 redis:
   enabled: false
 
