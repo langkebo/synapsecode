@@ -193,6 +193,9 @@ caches:
 # -----------------------------------------------
 # 当前配置：开启无验证注册，且限制注册间隔为10分钟
 enable_registration: true
+# 显式允许无验证公开注册（仅用于内网/测试环境）。
+# 生产环境务必改为关闭公开注册，或启用 email/captcha/token 验证。
+enable_registration_without_verification: true
 # 禁用三方验证（如邮件/验证码），保持开放注册
 # 注意：生产环境下建议开启验证或使用邀请制
 
