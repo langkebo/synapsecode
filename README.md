@@ -1,34 +1,36 @@
-# Matrix Synapse with Friends Functionality
+# Matrix Synapse 服务器实现
 
-一个基于Matrix Synapse的自定义服务器实现，包含完整的好友管理功能。
+一个完整的Matrix Synapse服务器实现，专为低资源环境优化，支持1CPU/2GB RAM服务器部署。
 
 ## 功能特性
 
 ### 核心功能
 - ✅ 完整的Matrix协议支持
 - ✅ 联邦通信（与其他Matrix服务器互通）
-- ✅ 端到端加密
+- ✅ 端到端加密和设备管理
 - ✅ 文件分享和媒体存储
-- ✅ 房间管理
-- ✅ 用户认证和授权
+- ✅ 房间创建、管理和成员控制
+- ✅ 用户注册、认证和授权
+- ✅ 消息发送、编辑和删除
+- ✅ 实时同步和事件处理
 
-### 好友功能（自定义）
-- ✅ 好友请求发送和响应
-- ✅ 好友列表管理
-- ✅ 用户搜索（用于添加好友）
-- ✅ 用户屏蔽/取消屏蔽
-- ✅ 跨域好友支持
-- ✅ 好友状态管理
-- ✅ 速率限制保护
+### 技术实现
+- ✅ 模块化架构设计
+- ✅ 完整的API路由系统
+- ✅ 数据库抽象层（支持SQLite和PostgreSQL）
+- ✅ 事件处理和验证系统
+- ✅ 联邦协议实现
+- ✅ 安全和权限控制
+- ✅ 缓存和性能优化
 
-### 技术特性
+### 部署特性
 - 🐳 Docker容器化部署
-- 📊 Prometheus + Grafana监控
-- 🗄️ PostgreSQL数据库
-- 🚀 Redis缓存
-- 🔐 SSL/TLS支持
-- 📈 性能优化
-- 🔄 自动备份
+- 📊 监控和日志系统
+- 🗄️ 多数据库支持（SQLite/PostgreSQL）
+- 🚀 内存和缓存优化
+- 🔐 SSL/TLS和安全配置
+- 📈 低资源环境性能优化
+- ⚡ 一键部署脚本
 
 ## 系统要求
 
@@ -54,43 +56,32 @@
 
 ## 快速开始
 
-### 🚀 极简版一键部署（推荐用于单核CPU 2G内存）
+### 🚀 一键部署（推荐）
 
 ```bash
 # 克隆项目
-git clone https://github.com/langkebo/synapsecode.git
+git clone <your-repository-url>
 cd synapsecode
 
-# 一键部署
+# 极简版部署（适用于1CPU/2GB RAM）
 sudo ./start.sh
-```
 
-### GitHub快速部署
-
-```bash
-# 方法1: 使用GitHub设置脚本（推荐）
-./setup-github.sh
-
-# 方法2: 手动GitHub部署
-# 1. 在GitHub创建新仓库
-# 2. 复制仓库URL
-# 3. 运行以下命令：
-git remote add origin https://github.com/yourusername/matrix-synapse-friends.git
-git push -u origin main
-```
-
-### 一键部署
-
-```bash
-# 克隆项目
-git clone https://github.com/yourusername/matrix-synapse-friends.git
-cd matrix-synapse-friends
-
-# 运行一键部署脚本
+# 或使用完整部署脚本
 sudo ./deploy.sh
 ```
 
-按照脚本提示完成配置即可。
+### Docker部署
+
+```bash
+# 使用Docker Compose
+docker-compose up -d
+
+# 查看服务状态
+docker-compose ps
+
+# 查看日志
+docker-compose logs -f synapse
+```
 
 ### 手动部署
 

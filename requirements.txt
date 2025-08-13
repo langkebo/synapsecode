@@ -1,0 +1,66 @@
+# Matrix Synapse Dependencies
+# Core dependencies for Matrix Synapse homeserver
+
+# Web framework and HTTP handling
+Twisted[tls,http2]>=22.4.0
+treq>=15.1
+service-identity>=18.1.0
+
+# JSON and data handling
+canonical-json>=1.4.0
+signedjson>=1.1.0
+pynacl>=1.2.1
+unpaddedbase64>=1.1.0
+
+# Database drivers
+# SQLite (built into Python)
+# PostgreSQL (optional)
+psycopg2>=2.8.0
+
+# Authentication and security
+bcrypt>=3.1.0
+pymacaroons>=0.13.0
+argon2-cffi>=18.1.0
+
+# Image processing
+Pillow>=5.4.0
+
+# Metrics and monitoring
+prometheus-client>=0.4.0
+
+# Configuration and utilities
+PyYAML>=3.11
+attrs>=19.2.0
+typing-extensions>=3.7.4
+zope.interface>=4.6.0
+
+# Templating
+Jinja2>=2.9
+MarkupSafe>=2.0
+
+# Email
+email-validator>=1.0.3
+
+# Caching (optional)
+pymacaroons-pynacl>=0.9.3
+
+# Development and testing dependencies (optional)
+# pytest>=6.0
+# coverage>=5.0
+# flake8>=3.7.0
+# black>=19.10b0
+# isort>=5.0.0
+# mypy>=0.910
+
+# Optional dependencies for enhanced features
+# redis>=3.2.0  # For Redis cache
+# jaeger-client>=4.0.0  # For distributed tracing
+# opentracing>=2.2.0  # For tracing
+# sentry-sdk>=0.10.2  # For error reporting
+
+# Low-resource server optimizations
+# These are already included in core dependencies
+# but listed here for clarity:
+# - SQLite for lightweight database
+# - Minimal cache configuration
+# - Optimized connection pools

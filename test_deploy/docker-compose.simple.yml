@@ -1,0 +1,86 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: matrix-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB:-synapse}
+      - POSTGRES_USER=${POSTGRES_USER:-synapse}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_INITDB_ARGS=--encoding=UTF-8 --lc-collate=C --lc-ctype=C
+      - POSTGRES_SHARED_BUFFERS=128MB
+      - POSTGRES_EFFECTIVE_CACHE_SIZE=512MB
+      - POSTGRES_WORK_MEM=4MB
+      - POSTGRES_MAINTENANCE_WORK_MEM=64MB
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - matrix-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-synapse}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 400M
+          cpus: "0.25"
+
+  synapse:
+    build:
+      context: .
+      dockerfile: Dockerfile.simple
+    container_name: matrix-synapse
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - SYNAPSE_CONFIG_PATH=/data/homeserver.yaml
+      - PYTHONOPTIMIZE=1
+      - PYTHONDONTWRITEBYTECODE=1
+    volumes:
+      - ./data:/data
+      - ./media:/data/media
+      - ./uploads:/data/uploads
+    ports:
+      - "127.0.0.1:8008:8008"
+    networks:
+      - matrix-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8008/_matrix/client/versions"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 120s
+    deploy:
+      resources:
+        limits:
+          memory: 1.2G
+          cpus: "0.7"
+
+  well-known:
+    image: nginx:alpine
+    container_name: matrix-well-known
+    restart: unless-stopped
+    volumes:
+      - ./well-known:/usr/share/nginx/html:ro
+    ports:
+      - "8080:80"
+    networks:
+      - matrix-network
+    deploy:
+      resources:
+        limits:
+          memory: 24M
+          cpus: "0.05"
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  matrix-network:
+    driver: bridge

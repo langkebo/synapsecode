@@ -12,21 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from PIL.features import check_codec
+"""Matrix media repository v1 API."""
 
-# check for JPEG support.
-if not check_codec("jpg"):
-    raise Exception(
-        "FATAL: jpeg codec not supported. Install pillow correctly! "
-        " 'sudo apt-get install libjpeg-dev' then 'pip uninstall pillow &&"
-        " pip install pillow --user'"
-    )
+from .download_resource import DownloadResource
+from .media_repository import MediaRepositoryResource
+from .media_storage import MediaStorage, FileInfo
+from .thumbnail_resource import ThumbnailResource
+from .upload_resource import UploadResource
 
-
-# check for PNG support.
-if not check_codec("zlib"):
-    raise Exception(
-        "FATAL: zip codec not supported. Install pillow correctly! "
-        " 'sudo apt-get install libjpeg-dev' then 'pip uninstall pillow &&"
-        " pip install pillow --user'"
-    )
+__all__ = [
+    "DownloadResource",
+    "MediaRepositoryResource", 
+    "MediaStorage",
+    "FileInfo",
+    "ThumbnailResource",
+    "UploadResource",
+]

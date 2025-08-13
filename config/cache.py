@@ -61,7 +61,7 @@ def _canonicalise_cache_name(cache_name: str) -> str:
     function, and these asterisks need to be stripped out
     """
 
-    cache_name = re.sub(r"[^A-Za-z_1-9]", "", cache_name)
+    cache_name = re.sub(r"[^A-Za-z_0-9]", "", cache_name)
 
     return cache_name.lower()
 
