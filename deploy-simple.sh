@@ -245,8 +245,9 @@ allow_public_rooms_without_auth: false
 # 禁用不必要功能以节省资源
 push:
   enabled: false
-email:
-  enabled: false
+# 完全禁用 email 功能 - 不设置 email 配置块以避免 notif_from 要求
+# email:
+#   enabled: false
 server_notices:
   enabled: false
 redis:
