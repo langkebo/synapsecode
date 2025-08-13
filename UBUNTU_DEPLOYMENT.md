@@ -35,7 +35,7 @@ fi
 ```bash
 # 以实际路径为准
 cd /opt
-sudo git clone <your-repo-url> synapsecode
+sudo https://github.com/langkebo/synapsecode.git
 cd synapsecode
 ```
 

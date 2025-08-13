@@ -6,8 +6,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     SYNAPSE_CONFIG_PATH=/data/homeserver.yaml
 
-# 安装系统依赖 - 运行时依赖（尽量精简）
+# 安装系统依赖 - 包含编译依赖和运行时依赖
 RUN apt-get update && apt-get install -y \
+    # 编译依赖（构建时需要）
+    build-essential \
+    libpq-dev \
+    libffi-dev \
+    libssl-dev \
+    libjpeg-dev \
+    libxml2-dev \
+    libxslt1-dev \
+    zlib1g-dev \
+    # 运行时依赖
     libpq5 \
     libffi8 \
     libssl3 \

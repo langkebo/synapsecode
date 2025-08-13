@@ -130,7 +130,13 @@ fi
 print_info "生成 homeserver.yaml 配置..."
 
 # 创建 data 目录
+print_info "创建数据目录..."
 mkdir -p data media uploads
+
+# 设置目录权限（991:991 是容器内 synapse 用户的 UID:GID）
+print_info "设置目录权限..."
+chown -R 991:991 data media uploads
+chmod -R 755 data media uploads
 
 # 生成 homeserver.yaml（使用实际值替换模板变量）
 cat > data/homeserver.yaml << EOF
