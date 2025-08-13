@@ -1,0 +1,48 @@
+# 超简化版 Dockerfile for Matrix Synapse - 使用官方 PyPI 包
+FROM python:3.9-slim
+
+# 设置环境变量
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    SYNAPSE_CONFIG_PATH=/data/homeserver.yaml
+
+# 安装系统依赖 - 运行时依赖（尽量精简）
+RUN apt-get update && apt-get install -y \
+    libpq5 \
+    libffi8 \
+    libssl3 \
+    libjpeg62-turbo \
+    libxml2 \
+    libxslt1.1 \
+    zlib1g \
+    curl \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# 创建非root用户
+RUN groupadd -r synapse && useradd -r -g synapse --create-home synapse
+
+# 设置工作目录
+WORKDIR /app
+
+# 直接安装官方 Matrix Synapse 包 (不使用本地源码)
+RUN pip install --no-cache-dir \
+    'matrix-synapse[all]' \
+    psycopg2-binary
+
+# 创建必要目录并设置权限
+RUN mkdir -p /data /media /uploads /logs && \
+    chown -R synapse:synapse /data /media /uploads /logs /app
+
+# 切换到非root用户
+USER synapse
+
+# 暴露端口
+EXPOSE 8008
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8008/_matrix/client/versions || exit 1
+
+# 默认命令
+CMD ["python", "-m", "synapse.app.homeserver", "--config-path", "/data/homeserver.yaml"]
