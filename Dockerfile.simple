@@ -29,8 +29,8 @@ RUN apt-get update && apt-get install -y \
     postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
-# 创建非root用户
-RUN groupadd -r synapse && useradd -r -g synapse --create-home synapse
+# 创建非root用户（固定 UID/GID 为 991，便于与宿主机目录权限匹配）
+RUN groupadd -r -g 991 synapse && useradd -r -u 991 -g 991 --create-home synapse
 
 # 设置工作目录
 WORKDIR /app
