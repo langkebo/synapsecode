@@ -87,7 +87,7 @@ print_info "配置环境变量..."
 
 # 获取默认服务器名
 SERVER_NAME_DEFAULT=$(hostname -f 2>/dev/null || hostname)
-SERVER_NAME_DEFAULT=$(echo "$SERVER_NAME_DEFAULT" | sed 's/^*\.*//')
+SERVER_NAME_DEFAULT=$(echo "$SERVER_NAME_DEFAULT" | sed 's/^*\..*//')
 
 # 创建或检查 .env 配置
 if [ ! -f .env ]; then
@@ -186,20 +186,10 @@ caches:
   event_cache_size: 500   # 降低事件缓存（原1000，升级服务器后可调为2000-5000）
 
 # 注册配置
-# 旧配置（保留作为升级服务器后的参考）：
-# enable_registration: ${ENABLE_REGISTRATION}
-# registration_shared_secret: "${REGISTRATION_SHARED_SECRET}"
-# 说明：以上为原有配置，依赖共享密钥的注册流程。
-# -----------------------------------------------
-# 当前配置：开启无验证注册，且限制注册间隔为10分钟
-enable_registration: true
-# 显式允许无验证公开注册（仅用于内网/测试环境）。
-# 生产环境务必改为关闭公开注册，或启用 email/captcha/token 验证。
-enable_registration_without_verification: true
-# 禁用三方验证（如邮件/验证码），保持开放注册
-# 注意：生产环境下建议开启验证或使用邀请制
+enable_registration: false                    # 关闭开放注册，使用管理员命令注册
+registration_shared_secret: "${REGISTRATION_SHARED_SECRET}"  # 管理员注册密钥
 
-# 注册速率限制（10分钟内最多1次）
+# 注册速率限制（防止滥用）
 rc_registration:
   per_second: 0.0017   # ≈ 每10分钟 1 次 (1/600)
   burst_count: 1       # 不允许突发多次注册
@@ -207,101 +197,54 @@ rc_registration:
 # 好友功能
 friends:
   enabled: ${FRIENDS_ENABLED}
-  max_friends_per_user: 100
-  rate_limiting:
-    max_requests_per_hour: 10
-    rate_limit_window: 3600
 
-# 速率限制
-# rc_registration 已在上方设置为每10分钟1次
-rc_login:
-  per_second: 0.2
-  burst_count: 5
+# 联邦配置
+federation_domain_whitelist: []
 
-rc_message:
-  per_second: 0.5   # 降低消息速率以降低CPU负载（升级后可调回1）
-  burst_count: 10   # 降低突发量（升级后可调回20）
-
-# 媒体配置（低配优化）
-max_upload_size: "8M"   # 降低上传大小限制（升级后可调为 20M/50M）
-media_retention:
-  remote_media_lifetime: "7d"
-  local_media_lifetime: "30d"
-
-# 统计配置
-report_stats: ${REPORT_STATS}
-
-# 安全配置
+# 密钥配置
 macaroon_secret_key: "${MACAROON_SECRET_KEY}"
 form_secret: "${FORM_SECRET}"
+
+# 报告统计（隐私保护）
+report_stats: false
+
+# 安全头
+serve_server_wellknown: true
+
+# 日志级别
+log_level: INFO
+
+# 签名密钥
 signing_key_path: "/data/signing.key"
-suppress_key_server_warning: true
 
-# 联邦密钥服务器
-trusted_key_servers:
-  - server_name: "matrix.org"
+# 邮件配置（可选）
+email:
+  smtp_host: localhost
+  smtp_port: 25
+  notif_from: "Matrix <noreply@${MATRIX_SERVER_NAME}>"
 
-# 隐私设置
-allow_public_rooms_over_federation: false
-allow_public_rooms_without_auth: false
+# 上传限制（适配低配服务器）
+max_upload_size: 50M
 
-# 禁用不必要功能以节省资源
-push:
-  enabled: false
-# 完全禁用 email 功能 - 不设置 email 配置块以避免 notif_from 要求
-# email:
-#   enabled: false
-# 完全禁用 server_notices 功能 - 不设置 server_notices 配置块以避免 system_mxid_localpart 要求
-# server_notices:
-#   enabled: false
-redis:
-  enabled: false
+# 用户配置
+user_directory:
+  enabled: true
+  search_all_users: false  # 保护隐私
 
-# 性能优化配置
-use_presence: false    # 禁用在线状态以节省资源
-enable_metrics: false  # 禁用指标收集
-allow_guest_access: false
-enable_media_repo: true
+# 预览URL（可选功能，消耗资源）
+url_preview_enabled: false
+url_preview_ip_range_blacklist:
+  - '127.0.0.0/8'
+  - '10.0.0.0/8'
+  - '172.16.0.0/12'
+  - '192.168.0.0/16'
+  - '100.64.0.0/10'
+  - '169.254.0.0/16'
+  - '::1/128'
+  - 'fe80::/64'
+  - 'fc00::/7'
+
 EOF
-
-# 生成日志配置
-cat > data/log.config << EOF
-version: 1
-
-formatters:
-  precise:
-    format: '%(asctime)s - %(name)s - %(lineno)d - %(levelname)s - %(request)s - %(message)s'
-
-filters:
-  context:
-    (): synapse.logging.context.LoggingContextFilter
-    request: ""
-
-handlers:
-  file:
-    class: logging.handlers.TimedRotatingFileHandler
-    formatter: precise
-    filename: /data/synapse.log
-    when: midnight
-    backupCount: 3
-    filters: [context]
-  console:
-    class: logging.StreamHandler
-    formatter: precise
-    filters: [context]
-
-loggers:
-  synapse.storage.SQL:
-    level: WARN
-
-root:
-  level: INFO
-  handlers: [file, console]
-
-disable_existing_loggers: false
-EOF
-
-print_success "配置文件生成完成"
 
 #-----------------------------
 # 创建 well-known 配置
@@ -313,7 +256,7 @@ mkdir -p well-known/.well-known/matrix
 # 服务器发现配置（注意端口）
 cat > well-known/.well-known/matrix/server << EOF
 {
-  "m.server": "${MATRIX_SERVER_NAME}:8008"
+  "m.server": "${MATRIX_SERVER_NAME}:8448"
 }
 EOF
 
@@ -542,9 +485,9 @@ echo "  健康检查: curl -f http://127.0.0.1:8008/_matrix/client/versions"
 echo "  well-known: curl -s http://127.0.0.1:8080/.well-known/matrix/server"
 echo ""
 echo "👤 创建管理员用户："
-echo "  ${COMPOSE} -f docker-compose.simple.yml exec synapse \\"
-echo "    register_new_matrix_user -c /data/homeserver.yaml \\"
-echo "    -a http://localhost:8008"
+echo "  ${COMPOSE} -f docker-compose.simple.yml exec synapse \"
+    register_new_matrix_user -c /data/homeserver.yaml \"
+    http://localhost:8008"
 echo ""
 echo "📌 重要提示："
 echo "  - 当前服务运行在 http://127.0.0.1:8008"
